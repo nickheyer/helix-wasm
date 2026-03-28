@@ -5,7 +5,7 @@ use std::{
 };
 
 use helix_event::AsyncHook;
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 
 use crate::{job, ui::overlay::Overlay};
 
@@ -33,8 +33,8 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
     fn handle_event(
         &mut self,
         path: Self::Event,
-        timeout: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
+        timeout: Option<Instant>,
+    ) -> Option<Instant> {
         if self
             .trigger
             .as_ref()

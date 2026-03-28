@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use helix_event::{request_redraw, send_blocking, AsyncHook};
+use helix_stdx::time::Instant;
 use tokio::sync::mpsc::Sender;
-use tokio::time::Instant;
 
 use crate::{Document, DocumentId, ViewId};
 

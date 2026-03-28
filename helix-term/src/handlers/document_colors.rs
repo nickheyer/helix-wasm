@@ -10,7 +10,7 @@ use helix_view::{
     handlers::{lsp::DocumentColorsEvent, Handlers},
     DocumentId, Editor, Theme,
 };
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 
 use crate::job;
 

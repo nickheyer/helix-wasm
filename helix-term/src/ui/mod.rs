@@ -16,6 +16,7 @@ mod text;
 mod text_decorations;
 
 use crate::compositor::Compositor;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::filter_picker_entry;
 use crate::job::{self, Callback};
 pub use completion::Completion;
@@ -189,6 +190,7 @@ pub fn raw_regex_prompt(
 }
 
 /// We want to exclude files that the editor can't handle yet
+#[cfg(not(target_arch = "wasm32"))]
 fn get_excluded_types() -> ignore::types::Types {
     use ignore::types::TypesBuilder;
     let mut type_builder = TypesBuilder::new();
@@ -204,16 +206,19 @@ fn get_excluded_types() -> ignore::types::Types {
         .expect("failed to build excluded_types")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct FilePickerData {
     root: PathBuf,
     directory_style: Style,
 }
+#[cfg(not(target_arch = "wasm32"))]
 type FilePicker = Picker<PathBuf, FilePickerData>;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     use ignore::WalkBuilder;
-    use std::time::Instant;
+    use helix_stdx::time::Instant;
 
     let config = editor.config();
     let data = FilePickerData {
@@ -283,14 +288,14 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     })
     .with_preview(|_editor, path| Some((path.as_path().into(), None)));
     let injector = picker.injector();
-    let timeout = std::time::Instant::now() + std::time::Duration::from_millis(30);
+    let timeout = helix_stdx::time::Instant::now() + std::time::Duration::from_millis(30);
 
     let mut hit_timeout = false;
     for file in &mut files {
         if injector.push(file).is_err() {
             break;
         }
-        if std::time::Instant::now() >= timeout {
+        if helix_stdx::time::Instant::now() >= timeout {
             hit_timeout = true;
             break;
         }
@@ -307,8 +312,10 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     picker
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type FileExplorer = Picker<(PathBuf, bool), (PathBuf, Style)>;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std::io::Error> {
     let directory_style = editor.theme.get("ui.text.directory");
     let directory_content = directory_content(&root, editor)?;
@@ -357,6 +364,7 @@ pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std
     Ok(picker)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)>, std::io::Error> {
     use ignore::WalkBuilder;
 
@@ -404,6 +412,7 @@ fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)
     Ok(content)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_child_if_single_dir(path: &Path) -> Option<PathBuf> {
     let mut entries = path.read_dir().ok()?;
     let entry = entries.next()?.ok()?;
@@ -519,10 +528,17 @@ pub mod completers {
             .collect()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn filename(editor: &Editor, input: &str) -> Vec<Completion> {
         filename_with_git_ignore(editor, input, true)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn filename(_editor: &Editor, _input: &str) -> Vec<Completion> {
+        Vec::new()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn filename_with_git_ignore(
         editor: &Editor,
         input: &str,
@@ -535,6 +551,15 @@ pub mod completers {
                 FileMatch::Accept
             }
         })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn filename_with_git_ignore(
+        _editor: &Editor,
+        _input: &str,
+        _git_ignore: bool,
+    ) -> Vec<Completion> {
+        Vec::new()
     }
 
     pub fn language(editor: &Editor, input: &str) -> Vec<Completion> {
@@ -568,10 +593,17 @@ pub mod completers {
             .collect()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn directory(editor: &Editor, input: &str) -> Vec<Completion> {
         directory_with_git_ignore(editor, input, true)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn directory(_editor: &Editor, _input: &str) -> Vec<Completion> {
+        Vec::new()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn directory_with_git_ignore(
         editor: &Editor,
         input: &str,
@@ -586,6 +618,16 @@ pub mod completers {
         })
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn directory_with_git_ignore(
+        _editor: &Editor,
+        _input: &str,
+        _git_ignore: bool,
+    ) -> Vec<Completion> {
+        Vec::new()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum FileMatch {
         /// Entry should be ignored
@@ -598,6 +640,7 @@ pub mod completers {
     }
 
     // TODO: we could return an iter/lazy thing so it can fetch as many as it needs.
+    #[cfg(not(target_arch = "wasm32"))]
     fn filename_impl<F>(
         editor: &Editor,
         input: &str,

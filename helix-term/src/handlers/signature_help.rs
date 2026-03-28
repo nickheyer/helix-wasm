@@ -10,7 +10,7 @@ use helix_view::events::{DocumentDidChange, SelectionDidChange};
 use helix_view::handlers::lsp::{SignatureHelpEvent, SignatureHelpInvoked};
 use helix_view::Editor;
 use tokio::sync::mpsc::Sender;
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 
 use crate::commands::Open;
 use crate::compositor::Compositor;
@@ -54,7 +54,7 @@ impl helix_event::AsyncHook for SignatureHelpHandler {
     fn handle_event(
         &mut self,
         event: Self::Event,
-        timeout: Option<tokio::time::Instant>,
+        timeout: Option<Instant>,
     ) -> Option<Instant> {
         match event {
             SignatureHelpEvent::Invoked => {

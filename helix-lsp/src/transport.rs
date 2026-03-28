@@ -1,19 +1,28 @@
-use crate::{
-    jsonrpc,
-    lsp::{self, notification::Notification as _},
-    Error, LanguageServerId, Result,
-};
-use anyhow::Context;
-use log::{error, info};
-use serde::{Deserialize, Serialize};
+use crate::{jsonrpc, Result};
 use serde_json::Value;
+use tokio::sync::mpsc::Sender;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+    lsp::{self, notification::Notification as _},
+    Error, LanguageServerId,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+#[cfg(not(target_arch = "wasm32"))]
+use log::{error, info};
+#[cfg(not(target_arch = "wasm32"))]
+use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
     process::{ChildStderr, ChildStdin, ChildStdout},
     sync::{
-        mpsc::{unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Mutex, Notify,
     },
 };
@@ -29,6 +38,7 @@ pub enum Payload {
 }
 
 /// A type representing all possible values sent from the server to the client.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
@@ -39,6 +49,7 @@ enum ServerMessage {
     Call(jsonrpc::Call),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct Transport {
     id: LanguageServerId,
@@ -46,6 +57,7 @@ pub struct Transport {
     pending_requests: Mutex<HashMap<jsonrpc::Id, Sender<Result<Value>>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Transport {
     pub fn start(
         server_stdout: BufReader<ChildStdout>,

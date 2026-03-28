@@ -35,10 +35,9 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    time::{sleep, Duration, Instant, Sleep},
-};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+use helix_stdx::time::{sleep, Duration, Elapsed, Sleep, TimerInstant};
 
 use anyhow::{anyhow, bail, Error};
 
@@ -537,6 +536,11 @@ pub fn get_terminal_provider() -> Option<TerminalConfig> {
         });
     }
 
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_terminal_provider() -> Option<TerminalConfig> {
     None
 }
 
@@ -1432,17 +1436,16 @@ impl Editor {
     }
 
     pub fn clear_idle_timer(&mut self) {
-        // equivalent to internal Instant::far_future() (30 years)
         self.idle_timer
             .as_mut()
-            .reset(Instant::now() + Duration::from_secs(86400 * 365 * 30));
+            .reset(TimerInstant::now() + Duration::from_secs(86400 * 365));
     }
 
     pub fn reset_idle_timer(&mut self) {
         let config = self.config();
         self.idle_timer
             .as_mut()
-            .reset(Instant::now() + config.idle_timeout);
+            .reset(TimerInstant::now() + config.idle_timeout);
     }
 
     pub fn clear_status(&mut self) {
@@ -2261,7 +2264,7 @@ impl Editor {
     pub async fn close_language_servers(
         &self,
         timeout: Option<u64>,
-    ) -> Result<(), tokio::time::error::Elapsed> {
+    ) -> Result<(), Elapsed> {
         // Remove all language servers from the file event handler.
         // Note: this is non-blocking.
         for client in self.language_servers.iter_clients() {
@@ -2270,7 +2273,7 @@ impl Editor {
                 .remove_client(client.id());
         }
 
-        tokio::time::timeout(
+        helix_stdx::time::timeout(
             Duration::from_millis(timeout.unwrap_or(3000)),
             future::join_all(
                 self.language_servers
@@ -2306,15 +2309,15 @@ impl Editor {
                 _ = helix_event::redraw_requested() => {
                     if  !self.needs_redraw{
                         self.needs_redraw = true;
-                        let timeout = Instant::now() + Duration::from_millis(33);
-                        if timeout < self.idle_timer.deadline() && timeout < self.redraw_timer.deadline(){
-                            self.redraw_timer.as_mut().reset(timeout)
+                        let deadline = TimerInstant::now() + Duration::from_millis(33);
+                        if deadline < self.idle_timer.deadline() && deadline < self.redraw_timer.deadline(){
+                            self.redraw_timer.as_mut().reset(deadline)
                         }
                     }
                 }
 
                 _ = &mut self.redraw_timer  => {
-                    self.redraw_timer.as_mut().reset(Instant::now() + Duration::from_secs(86400 * 365 * 30));
+                    self.redraw_timer.as_mut().reset(TimerInstant::now() + Duration::from_secs(86400 * 365));
                     return EditorEvent::Redraw
                 }
                 _ = &mut self.idle_timer  => {

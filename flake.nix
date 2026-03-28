@@ -61,6 +61,8 @@
         default = let
           commonRustFlagsEnv = "-C link-arg=-fuse-ld=lld -C target-cpu=native --cfg tokio_unstable";
           platformRustFlagsEnv = lib.optionalString pkgs.stdenv.isLinux "-Clink-arg=-Wl,--no-rosegment";
+          # Toolchain with wasm32-unknown-unknown target for WASM builds
+          wasmToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         in
           pkgs.mkShell {
             inputsFrom = [self.checks.${system}.helix];
@@ -69,6 +71,12 @@
                 lld
                 cargo-flamegraph
                 rust-bin.nightly.latest.rust-analyzer
+                wasmToolchain
+                wasm-pack
+                wasm-bindgen-cli
+                binaryen # wasm-opt
+                llvmPackages.clang-unwrapped # unwrapped clang for wasm32 C cross-compilation
+                llvmPackages.clang-unwrapped.lib # clang builtin headers (stdbool.h etc.)
               ]
               ++ (lib.optional (stdenv.isx86_64 && stdenv.isLinux) cargo-tarpaulin)
               ++ (lib.optional stdenv.isLinux lldb);

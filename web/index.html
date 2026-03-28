@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Helix Editor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #282c34; }
+        #terminal { width: 100%; height: 100%; }
+    </style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+    <!-- Import map to provide the 'env' module for tree-sitter C libc stubs -->
+    <script type="importmap">
+    {
+        "imports": {
+            "env": "./env.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="terminal"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script type="module">
+        import init, { run_editor, send_key_event, send_resize_event, send_paste_event } from './pkg/helix_wasm.js';
+        import { _set_wasm_exports } from './env.js';
+
+        // Bridge functions that WASM calls to render to the terminal
+        window.helixWasm = {
+            writeToTerminal(data) {
+                if (window._term) {
+                    window._term.write(data);
+                }
+            },
+            getTerminalSize() {
+                if (window._term) {
+                    return new Uint16Array([window._term.cols, window._term.rows]);
+                }
+                return new Uint16Array([80, 24]);
+            }
+        };
+
+        async function main() {
+            const term = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+                theme: {
+                    background: '#282c34',
+                    foreground: '#abb2bf',
+                    cursor: '#528bff',
+                },
+                allowProposedApi: true,
+            });
+            window._term = term;
+
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+
+            try {
+                const webglAddon = new WebglAddon.WebglAddon();
+                term.loadAddon(webglAddon);
+            } catch (e) {
+                console.warn('WebGL addon not available:', e);
+            }
+
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+
+            term.write('Loading Helix...\r\n');
+
+            const wasmInstance = await init();
+            // Give env.js access to WASM exports for malloc/free/memory
+            _set_wasm_exports(wasmInstance);
+            term.write('WASM module loaded. Starting editor...\r\n');
+
+            // ── Input: keyboard ──────────────────────────────────────
+            // Capture all keyboard input for the editor instance.
+            // preventDefault() stops the browser from handling shortcuts
+            // (Ctrl+T, Ctrl+W, Ctrl+N, etc.) when the editor has focus.
+            term.attachCustomKeyEventHandler((e) => {
+                if (e.type === 'keydown') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    send_key_event(e.key, e.shiftKey, e.ctrlKey, e.altKey);
+                }
+                return false;
+            });
+
+            // ── Input: paste ────────────────────────────────────────
+            document.addEventListener('paste', (e) => {
+                const text = e.clipboardData?.getData('text');
+                if (text) {
+                    e.preventDefault();
+                    send_paste_event(text);
+                }
+            });
+
+            // ── Input: resize ───────────────────────────────────────
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+                send_resize_event(term.cols, term.rows);
+            });
+
+            term.clear();
+
+            try {
+                await run_editor();
+            } catch (e) {
+                term.write('\r\nEditor error: ' + e + '\r\n');
+                console.error('Editor error:', e);
+            }
+        }
+
+        main().catch(e => {
+            console.error('Fatal error:', e);
+            document.body.innerText = 'Fatal error: ' + e;
+        });
+    </script>
+</body>
+</html>

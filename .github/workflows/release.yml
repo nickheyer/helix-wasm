@@ -145,7 +145,7 @@ jobs:
           echo "target flag is: ${{ env.TARGET_FLAGS }}"
 
       - name: Run cargo test
-        if: "!matrix.skip_tests"
+        if: !matrix.skip_tests
         run: ${{ env.CARGO }} test --release --locked --target ${{ matrix.target }} --workspace
 
       - name: Build release binary

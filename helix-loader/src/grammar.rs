@@ -1,15 +1,19 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::time::SystemTime;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::mpsc::channel,
-};
-use tempfile::TempPath;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use tree_house::tree_sitter::Grammar;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
+use std::process::Command;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
+#[cfg(not(target_arch = "wasm32"))]
+use tempfile::TempPath;
 
 #[cfg(target_os = "macos")]
 const DYLIB_EXTENSION: &str = "dylib";
@@ -64,8 +68,9 @@ const BUILD_TARGET: &str = env!("BUILD_TARGET");
 const REMOTE_NAME: &str = "origin";
 
 #[cfg(target_arch = "wasm32")]
-pub fn get_language(name: &str) -> Result<Option<Grammar>> {
-    unimplemented!()
+pub fn get_language(_name: &str) -> Result<Option<Grammar>> {
+    // TODO: load pre-compiled WASM grammars
+    Ok(None)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,11 +86,13 @@ pub fn get_language(name: &str) -> Result<Option<Grammar>> {
     Ok(Some(grammar))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn ensure_git_is_available() -> Result<()> {
     helix_stdx::env::which("git")?;
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fetch_grammars() -> Result<()> {
     ensure_git_is_available()?;
 
@@ -147,6 +154,7 @@ pub fn fetch_grammars() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_grammars(target: Option<String>) -> Result<()> {
     ensure_git_is_available()?;
 
@@ -190,6 +198,7 @@ pub fn build_grammars(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 // Returns the set of grammar configurations the user requests.
 // Grammars are configured in the default and user `languages.toml` and are
 // merged. The `grammar_selection` key of the config is then used to filter
@@ -216,6 +225,7 @@ fn get_grammar_configs() -> Result<Vec<GrammarConfiguration>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     let config: Configuration = crate::config::user_lang_config(false)
         .context("Could not parse languages.toml")?
@@ -237,6 +247,7 @@ pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_parallel<F, Res>(grammars: Vec<GrammarConfiguration>, job: F) -> Vec<(String, Result<Res>)>
 where
     F: Fn(GrammarConfiguration) -> Result<Res> + Send + 'static + Clone,
@@ -261,16 +272,19 @@ where
     rx.iter().collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum FetchStatus {
     GitUpToDate,
     GitUpdated { revision: String },
     NonGit,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct VendoredGrammar {
     dir: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl VendoredGrammar {
     fn new(grammar: &str) -> Self {
         let dir = crate::runtime_dirs()
@@ -344,6 +358,7 @@ impl VendoredGrammar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
     let GrammarSource::Git {
         remote, revision, ..
@@ -369,6 +384,7 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
 
 // A wrapper around 'git' commands which returns stdout in success and a
 // helpful error message showing the command, stdout, and stderr in error.
+#[cfg(not(target_arch = "wasm32"))]
 fn git<I, S>(repository_dir: &Path, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -393,11 +409,13 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum BuildStatus {
     AlreadyBuilt,
     Built,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<BuildStatus> {
     let grammar_dir = if let GrammarSource::Local { path } = &grammar.source {
         PathBuf::from(&path)
@@ -436,6 +454,7 @@ fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<
     build_tree_sitter_library(&path, grammar, target)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_tree_sitter_library(
     src_path: &Path,
     grammar: GrammarConfiguration,
@@ -620,6 +639,7 @@ fn build_tree_sitter_library(
     Ok(BuildStatus::Built)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn needs_recompile(
     lib_path: &Path,
     parser_c_path: &Path,
@@ -640,6 +660,7 @@ fn needs_recompile(
     Ok(false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn mtime(path: &Path) -> Result<SystemTime> {
     Ok(fs::metadata(path)?.modified()?)
 }

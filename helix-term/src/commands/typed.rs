@@ -150,17 +150,25 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
         // If the path is a directory, open a file picker on that directory and update the status
         // message
         if let Ok(true) = std::fs::canonicalize(&path).map(|p| p.is_dir()) {
-            let callback = async move {
-                let call: job::Callback = job::Callback::EditorCompositor(Box::new(
-                    move |editor: &mut Editor, compositor: &mut Compositor| {
-                        let picker =
-                            ui::file_picker(editor, path.into_owned()).with_default_action(action);
-                        compositor.push(Box::new(overlaid(picker)));
-                    },
-                ));
-                Ok(call)
-            };
-            cx.jobs.callback(callback);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let callback = async move {
+                    let call: job::Callback = job::Callback::EditorCompositor(Box::new(
+                        move |editor: &mut Editor, compositor: &mut Compositor| {
+                            let picker = ui::file_picker(editor, path.into_owned())
+                                .with_default_action(action);
+                            compositor.push(Box::new(overlaid(picker)));
+                        },
+                    ));
+                    Ok(call)
+                };
+                cx.jobs.callback(callback);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                cx.editor
+                    .set_error("File picker is not available on wasm32");
+            }
         } else {
             // Otherwise, just open the file
             let _ = cx.editor.open(&path, action)?;
@@ -2546,6 +2554,7 @@ fn pipe_impl(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_shell_command(
     cx: &mut compositor::Context,
     args: Args,
@@ -2580,6 +2589,18 @@ fn run_shell_command(
     cx.jobs.callback(callback);
 
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_shell_command(
+    _cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Shell commands are not available on wasm32")
 }
 
 fn reset_diff_change(
@@ -4403,6 +4424,7 @@ fn complete_expansion_kind(content: &str, offset: usize) -> Vec<ui::prompt::Comp
     .collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn trust_workspace(
     cx: &mut compositor::Context,
     args: Args<'_>,
@@ -4419,6 +4441,19 @@ fn trust_workspace(
     lsp_restart(cx, args, event)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn trust_workspace(
+    _cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Workspace trust is not available on wasm32")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn untrust_workspace(
     _cx: &mut compositor::Context,
     _args: Args<'_>,
@@ -4430,4 +4465,16 @@ fn untrust_workspace(
 
     helix_loader::workspace_trust::WorkspaceTrust::load(false).untrust_workspace();
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn untrust_workspace(
+    _cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Workspace trust is not available on wasm32")
 }

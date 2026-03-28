@@ -5,7 +5,7 @@ use imara_diff::{IndentHeuristic, IndentLevel, InternedInput};
 use parking_lot::RwLock;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Notify;
-use tokio::time::{timeout, timeout_at, Duration};
+use helix_stdx::time::{timeout, Duration, Instant};
 
 use crate::diff::{
     DiffInner, Event, RenderLock, ALGORITHM, DIFF_DEBOUNCE_TIME_ASYNC, DIFF_DEBOUNCE_TIME_SYNC,
@@ -57,9 +57,10 @@ impl DiffWorker {
             // Calculating diffs is computationally expensive and should
             // not run inside an async function to avoid blocking other futures.
             // Note: tokio::task::block_in_place does not work during tests
-            #[cfg(test)]
+            // and is not available on wasm32.
+            #[cfg(any(test, target_arch = "wasm32"))]
             process_accumulated_events();
-            #[cfg(not(test))]
+            #[cfg(not(any(test, target_arch = "wasm32")))]
             tokio::task::block_in_place(process_accumulated_events);
 
             self.apply_hunks(interner.diff_base(), interner.doc());
@@ -180,7 +181,7 @@ impl EventAccumulator {
                         // Acquire a lock on the redraw handle.
                         // The lock will block the rendering from occurring while held.
                         // The rendering waits for the diff if it doesn't time out
-                        timeout_at(timeout, diff_finished_notify.notified()).await
+                        helix_stdx::time::timeout(timeout.saturating_duration_since(Instant::now()), diff_finished_notify.notified()).await
                     };
                     // we either reached the timeout or the diff is finished, release the render lock
                     drop(lock);

@@ -45,10 +45,11 @@ runtime_local! {
 
 pub async fn report(msg: impl Into<StatusMessage>) {
     // if the error channel overflows just ignore it
-    let _ = MESSAGES
-        .wait()
-        .send_timeout(msg.into(), Duration::from_millis(10))
-        .await;
+    let _ = helix_stdx::time::timeout(
+        Duration::from_millis(10),
+        MESSAGES.wait().send(msg.into()),
+    )
+    .await;
 }
 
 pub fn report_blocking(msg: impl Into<StatusMessage>) {

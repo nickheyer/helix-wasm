@@ -1,7 +1,10 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::{data_dir, workspace_exclude_file, workspace_trust_file};
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct WorkspaceTrust {
     trusted: HashSet<PathBuf>,
     excluded: Option<HashSet<PathBuf>>,
@@ -13,6 +16,7 @@ pub enum TrustStatus {
     Trusted,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl WorkspaceTrust {
     /// Loads `WorkspaceTrust`.
     ///
@@ -135,6 +139,7 @@ pub enum TrustUntrustStatus {
     AllowAlways,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
     if insecure {
         return TrustStatus::Trusted;
@@ -155,6 +160,13 @@ pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
     TrustStatus::Untrusted
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn quick_query_workspace(_insecure: bool) -> TrustStatus {
+    // In the browser, all content is user-provided and trusted
+    TrustStatus::Trusted
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntrustStatus {
     if insecure {
         return TrustUntrustStatus::AllowAlways;
@@ -185,4 +197,9 @@ pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntru
         Err(err) => log::error!("workspace_untrust file couldn't be read: {err:?}"),
     };
     TrustUntrustStatus::DenyOnce
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn quick_query_workspace_with_explicit_untrust(_insecure: bool) -> TrustUntrustStatus {
+    TrustUntrustStatus::AllowAlways
 }

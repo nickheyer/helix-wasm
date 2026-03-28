@@ -1,0 +1,23 @@
+[package]
+name = "helix-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+helix-term = { path = "../helix-term", default-features = false }
+helix-core = { path = "../helix-core" }
+helix-view = { path = "../helix-view" }
+helix-loader = { path = "../helix-loader" }
+helix-event = { path = "../helix-event" }
+
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+anyhow = "1"
+log = "0.4"

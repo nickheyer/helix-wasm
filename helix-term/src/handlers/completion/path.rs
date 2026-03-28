@@ -34,10 +34,18 @@ pub(crate) fn path_completion(
         get_path_suffix(line_until_cursor, false).and_then(|matched_path| {
             let matched_path = Cow::from(matched_path);
             let path: Cow<_> = if matched_path.starts_with("file://") {
-                Url::from_str(&matched_path)
-                    .ok()
-                    .and_then(|url| url.to_file_path().ok())?
-                    .into()
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    Url::from_str(&matched_path)
+                        .ok()
+                        .and_then(|url| url.to_file_path().ok())?
+                        .into()
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // to_file_path is not available on wasm32
+                    return None;
+                }
             } else {
                 Path::new(&*matched_path).into()
             };

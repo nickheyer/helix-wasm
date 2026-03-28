@@ -9,7 +9,7 @@ use helix_view::{
     handlers::{lsp::DocumentLinksEvent, Handlers},
     DocumentId, Editor,
 };
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 
 use crate::job;
 

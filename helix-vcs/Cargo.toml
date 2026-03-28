@@ -12,16 +12,23 @@ homepage.workspace = true
 [dependencies]
 helix-core = { path = "../helix-core" }
 helix-event = { path = "../helix-event" }
+helix-stdx = { path = "../helix-stdx", features = ["tokio"] }
 
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
+tokio = { version = "1", features = ["sync", "macros"] }
 parking_lot.workspace = true
 arc-swap.workspace = true
 
-gix = { version = "0.80.0", features = ["attributes", "status", "max-performance"], default-features = false, optional = true }
 imara-diff =  "0.2.0"
 anyhow = "1"
 
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "parking_lot"] }
+gix = { version = "0.80.0", default-features = false, features = ["attributes", "status", "max-performance"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["rt"] }
 
 [features]
 git = ["gix"]

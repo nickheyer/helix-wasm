@@ -41,8 +41,8 @@ pub use noop::ClipboardProvider;
 mod noop {
     use super::*;
 
-    #[derive(Debug, Clone)]
-    pub enum ClipboardProvider {}
+    #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ClipboardProvider;
 
     impl ClipboardProvider {
         pub fn detect() -> Self {
@@ -53,7 +53,7 @@ mod noop {
             "none".into()
         }
 
-        pub fn get_contents(&self, _clipboard_type: ClipboardType) -> Result<String> {
+        pub fn get_contents(&self, _clipboard_type: &ClipboardType) -> Result<String> {
             Err(ClipboardError::ReadingNotSupported)
         }
 

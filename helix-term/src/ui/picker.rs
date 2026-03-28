@@ -610,7 +610,10 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 let preview = std::fs::metadata(&path)
                     .and_then(|metadata| {
                         if metadata.is_dir() {
+                            #[cfg(not(target_arch = "wasm32"))]
                             let files = super::directory_content(&path, editor)?;
+                            #[cfg(target_arch = "wasm32")]
+                            let files: Vec<(std::path::PathBuf, bool)> = Vec::new();
                             let file_names: Vec<_> = files
                                 .iter()
                                 .filter_map(|(file_path, is_dir)| {

@@ -31,7 +31,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Weak};
-use std::time::SystemTime;
+use helix_stdx::time::SystemTime;
 
 use helix_core::{
     editor_config::EditorConfig,
@@ -203,7 +203,7 @@ pub struct Document {
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
-    pub focused_at: std::time::Instant,
+    pub focused_at: helix_stdx::time::Instant,
 
     pub readonly: bool,
 
@@ -748,7 +748,7 @@ impl Document {
             diff_handle: None,
             config,
             version_control_head: None,
-            focused_at: std::time::Instant::now(),
+            focused_at: helix_stdx::time::Instant::now(),
             readonly: false,
             jump_labels: HashMap::new(),
             document_highlights: HashMap::new(),
@@ -838,6 +838,17 @@ impl Document {
     /// to format it nicely.
     // We can't use anyhow::Result here since the output of the future has to be
     // clonable to be used as shared future. So use a custom error type.
+    #[cfg(target_arch = "wasm32")]
+    pub fn format(
+        &self,
+        _editor: &Editor,
+    ) -> Option<BoxFuture<'static, Result<Transaction, FormatterError>>> {
+        // No external formatters or LSP in browser
+        None
+    }
+
+    // clonable to be used as shared future. So use a custom error type.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn format(
         &self,
         editor: &Editor,
@@ -979,6 +990,43 @@ impl Document {
 
     /// The `Document`'s text is encoded according to its encoding and written to the file located
     /// at its `path()`.
+    #[cfg(target_arch = "wasm32")]
+    fn save_impl(
+        &mut self,
+        path: Option<PathBuf>,
+        _force: bool,
+    ) -> Result<
+        impl Future<Output = Result<DocumentSavedEvent, anyhow::Error>> + 'static + Send,
+        anyhow::Error,
+    > {
+        let path = match path {
+            Some(path) => helix_stdx::path::canonicalize(path),
+            None => {
+                if self.path.is_none() {
+                    anyhow::bail!("Can't save with no path set!");
+                }
+                self.path.as_ref().unwrap().clone()
+            }
+        };
+        let current_rev = self.get_current_revision();
+        let doc_id = self.id();
+        let text = self.text().clone();
+
+        let future = async move {
+            Ok(DocumentSavedEvent {
+                revision: current_rev,
+                save_time: SystemTime::UNIX_EPOCH,
+                doc_id,
+                path,
+                text,
+            })
+        };
+        Ok(future)
+    }
+
+    /// The `Document`'s text is encoded according to its encoding and written to the file located
+    /// at its `path()`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_impl(
         &mut self,
         path: Option<PathBuf>,
@@ -1220,22 +1268,29 @@ impl Document {
     }
 
     pub fn pickup_last_saved_time(&mut self) {
-        self.last_saved_time = match self.path() {
-            Some(path) => match path.metadata() {
-                Ok(metadata) => match metadata.modified() {
-                    Ok(mtime) => mtime,
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.last_saved_time = match self.path() {
+                Some(path) => match path.metadata() {
+                    Ok(metadata) => match metadata.modified() {
+                        Ok(mtime) => mtime,
+                        Err(err) => {
+                            log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
+                            SystemTime::now()
+                        }
+                    },
                     Err(err) => {
                         log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
                         SystemTime::now()
                     }
                 },
-                Err(err) => {
-                    log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
-                    SystemTime::now()
-                }
-            },
-            None => SystemTime::now(),
-        };
+                None => SystemTime::now(),
+            };
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.last_saved_time = SystemTime::now();
+        }
     }
 
     // Detect if the file is readonly and change the readonly field if necessary (unix only)
@@ -1399,7 +1454,7 @@ impl Document {
 
     /// Mark document as recent used for MRU sorting
     pub fn mark_as_focused(&mut self) {
-        self.focused_at = std::time::Instant::now();
+        self.focused_at = helix_stdx::time::Instant::now();
     }
 
     /// Remove a view's selection and inlay hints from this document.
@@ -2002,7 +2057,7 @@ impl Document {
 
     /// File path as a URL.
     pub fn url(&self) -> Option<Url> {
-        Url::from_file_path(self.path()?).ok()
+        helix_lsp::url_from_file_path(self.path()?).ok()
     }
 
     pub fn uri(&self) -> Option<helix_core::Uri> {

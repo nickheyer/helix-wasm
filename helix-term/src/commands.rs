@@ -1,9 +1,12 @@
 pub(crate) mod dap;
 pub(crate) mod lsp;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod syntax;
 pub(crate) mod typed;
 
 pub use dap::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use syntax::*;
 use futures_util::FutureExt;
 use helix_event::status;
 use helix_stdx::{
@@ -12,7 +15,6 @@ use helix_stdx::{
 };
 use helix_vcs::{FileChange, Hunk};
 pub use lsp::*;
-pub use syntax::*;
 use tui::{
     text::{Span, Spans},
     widgets::Cell,
@@ -64,10 +66,11 @@ use movement::Movement;
 
 use crate::{
     compositor::{self, Component, Compositor},
-    filter_picker_entry,
     job::Callback,
     ui::{self, overlay::overlaid, Picker, PickerColumn, Popup, Prompt, PromptEvent},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::filter_picker_entry;
 
 use crate::job::{self, Jobs};
 use std::{
@@ -90,8 +93,11 @@ use once_cell::sync::Lazy;
 use serde::de::{self, Deserialize, Deserializer};
 use url::Url;
 
+#[cfg(not(target_arch = "wasm32"))]
 use grep_regex::RegexMatcherBuilder;
+#[cfg(not(target_arch = "wasm32"))]
 use grep_searcher::{sinks, BinaryDetection, SearcherBuilder};
+#[cfg(not(target_arch = "wasm32"))]
 use ignore::{DirEntry, WalkBuilder, WalkState};
 
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyEvent)>;
@@ -1453,8 +1459,15 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
         let path = path::expand(&sel);
         let path = &rel_path.join(path);
         if path.is_dir() {
-            let picker = ui::file_picker(cx.editor, path.into());
-            cx.push_layer(Box::new(overlaid(picker)));
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let picker = ui::file_picker(cx.editor, path.into());
+                cx.push_layer(Box::new(overlaid(picker)));
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                cx.editor.set_error("File picker is not available on wasm32");
+            }
         } else if let Err(e) = cx.editor.open(path, action) {
             cx.editor.set_error(format!("Open file failed: {:?}", e));
         }
@@ -1463,6 +1476,7 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
 
 /// Opens the given url. If the URL points to a valid textual file it is open in helix.
 //  Otherwise, the file is open using external program.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_url(cx: &mut Context, url: Url, action: Action) {
     let doc = doc!(cx.editor);
     let rel_path = doc
@@ -1496,6 +1510,19 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
                 cx.editor.set_error(format!("Open file failed: {:?}", e));
             }
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_url(cx: &mut Context, url: Url, action: Action) {
+    if url.scheme() == "file" {
+        let path = std::path::PathBuf::from(url.path());
+        if let Err(e) = cx.editor.open(&path, action) {
+            cx.editor.set_error(format!("Open file failed: {:?}", e));
+        }
+    } else {
+        cx.editor
+            .set_error("Opening external URLs is not available on wasm32");
     }
 }
 
@@ -2473,6 +2500,7 @@ fn make_search_word_bounded(cx: &mut Context) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn global_search(cx: &mut Context) {
     #[derive(Debug)]
     struct FileResult {
@@ -2720,6 +2748,12 @@ fn global_search(cx: &mut Context) {
     .with_dynamic_query(get_files, Some(275));
 
     cx.push_layer(Box::new(overlaid(picker)));
+}
+
+#[cfg(target_arch = "wasm32")]
+fn global_search(cx: &mut Context) {
+    cx.editor
+        .set_error("Global search is not available on wasm32");
 }
 
 enum Extend {
@@ -3100,6 +3134,7 @@ fn append_mode(cx: &mut Context) {
     doc.set_selection(view.id, selection);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3110,6 +3145,13 @@ fn file_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_picker(cx: &mut Context) {
+    cx.editor
+        .set_error("File picker is not available on wasm32");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3136,6 +3178,13 @@ fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_picker_in_current_buffer_directory(cx: &mut Context) {
+    cx.editor
+        .set_error("File picker is not available on wasm32");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
@@ -3147,6 +3196,13 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_picker_in_current_directory(cx: &mut Context) {
+    cx.editor
+        .set_error("File picker is not available on wasm32");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3159,6 +3215,13 @@ fn file_explorer(cx: &mut Context) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_explorer(cx: &mut Context) {
+    cx.editor
+        .set_error("File explorer is not available on wasm32");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3186,6 +3249,13 @@ fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
+    cx.editor
+        .set_error("File explorer is not available on wasm32");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
@@ -3199,6 +3269,12 @@ fn file_explorer_in_current_directory(cx: &mut Context) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn file_explorer_in_current_directory(cx: &mut Context) {
+    cx.editor
+        .set_error("File explorer is not available on wasm32");
+}
+
 fn buffer_picker(cx: &mut Context) {
     let current = view!(cx.editor).doc;
 
@@ -3207,7 +3283,7 @@ fn buffer_picker(cx: &mut Context) {
         path: Option<PathBuf>,
         is_modified: bool,
         is_current: bool,
-        focused_at: std::time::Instant,
+        focused_at: helix_stdx::time::Instant,
     }
 
     let new_meta = |doc: &Document| BufferMeta {
@@ -6399,10 +6475,17 @@ fn shell_keep_pipe(cx: &mut Context) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_impl(shell: &[String], cmd: &str, input: Option<Rope>) -> anyhow::Result<Tendril> {
     tokio::task::block_in_place(|| helix_lsp::block_on(shell_impl_async(shell, cmd, input)))
 }
 
+#[cfg(target_arch = "wasm32")]
+fn shell_impl(_shell: &[String], _cmd: &str, _input: Option<Rope>) -> anyhow::Result<Tendril> {
+    bail!("Shell commands are not available on wasm32")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn shell_impl_async(
     shell: &[String],
     cmd: &str,
@@ -6581,7 +6664,7 @@ fn shell_prompt_for_behavior(cx: &mut Context, prompt: Cow<'static, str>, behavi
 }
 
 fn suspend(_cx: &mut Context) {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_arch = "wasm32")))]
     {
         // SAFETY: These are calls to standard POSIX functions.
         // Unsafe is necessary since we are calling outside of Rust.
@@ -7010,6 +7093,18 @@ fn jump_to_word(cx: &mut Context, behaviour: Movement) {
         }
     }
     jump_to_label(cx, words, behaviour)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn syntax_symbol_picker(cx: &mut Context) {
+    cx.editor
+        .set_error("Syntax symbol picker is not available on wasm32");
+}
+
+#[cfg(target_arch = "wasm32")]
+fn syntax_workspace_symbol_picker(cx: &mut Context) {
+    cx.editor
+        .set_error("Syntax workspace symbol picker is not available on wasm32");
 }
 
 fn lsp_or_syntax_symbol_picker(cx: &mut Context) {

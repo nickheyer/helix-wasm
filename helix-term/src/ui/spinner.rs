@@ -1,4 +1,6 @@
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
+
+use helix_stdx::time::Instant;
 
 use helix_lsp::LanguageServerId;
 

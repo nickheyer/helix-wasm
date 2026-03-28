@@ -12,6 +12,35 @@ pub use jsonrpc::Call;
 use log::warn;
 pub use lsp::{Position, Url};
 
+/// Helper to create a file:// URL from a path, compatible with wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn url_from_file_path(path: &Path) -> Result<lsp::Url, ()> {
+    lsp::Url::from_file_path(path)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn url_from_file_path(path: &Path) -> Result<lsp::Url, ()> {
+    let path_str = path.to_string_lossy();
+    lsp::Url::parse(&format!("file://{path_str}")).map_err(|_| ())
+}
+
+/// Helper to create a file:// URL from a directory path, compatible with wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn url_from_directory_path(path: &Path) -> Result<lsp::Url, ()> {
+    lsp::Url::from_directory_path(path)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn url_from_directory_path(path: &Path) -> Result<lsp::Url, ()> {
+    let path_str = path.to_string_lossy();
+    let s = if path_str.ends_with('/') {
+        format!("file://{path_str}")
+    } else {
+        format!("file://{path_str}/")
+    };
+    lsp::Url::parse(&s).map_err(|_| ())
+}
+
 use futures_util::stream::select_all::SelectAll;
 use helix_core::syntax::config::{
     LanguageConfiguration, LanguageServerConfiguration, LanguageServerFeatures, RootMarkers,
@@ -907,7 +936,7 @@ fn start_client(
     // `root_uri` and `workspace_folder` can be empty in case there is no workspace
     // `root_url` can not, use `workspace` as a fallback
     let root_path = root.clone().unwrap_or_else(|| workspace.clone());
-    let root_uri = root.and_then(|root| lsp::Url::from_file_path(root).ok());
+    let root_uri = root.and_then(|root| url_from_file_path(&root).ok());
 
     if let Some(globset) = &ls_config.required_root_patterns {
         if !root_path

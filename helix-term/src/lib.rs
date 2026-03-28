@@ -12,7 +12,7 @@ pub mod job;
 pub mod keymap;
 pub mod ui;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 use std::env::var_os;
 
 use std::path::Path;
@@ -20,15 +20,20 @@ use std::path::Path;
 use futures_util::Future;
 mod handlers;
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_input;
+
+#[cfg(not(target_arch = "wasm32"))]
 use ignore::DirEntry;
+#[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_arch = "wasm32"))]
 fn true_color() -> bool {
     true
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 fn true_color() -> bool {
     if var_os("COLORTERM").is_some_and(|v| v == "truecolor" || v == "24bit")
         || var_os("WSL_DISTRO_NAME").is_some()
@@ -47,6 +52,7 @@ fn true_color() -> bool {
 }
 
 /// Function used for filtering dir entries in the various file pickers.
+#[cfg(not(target_arch = "wasm32"))]
 fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
     // We always want to ignore popular VCS directories, otherwise if
     // `ignore` is turned off, we end up with a lot of noise
@@ -72,6 +78,7 @@ fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> b
 }
 
 /// Opens URL in external program.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_external_url_callback(
     url: Url,
 ) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {

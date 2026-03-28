@@ -4,6 +4,7 @@ pub mod workspace_trust;
 
 use helix_stdx::{env::current_working_dir, path};
 
+#[cfg(not(target_arch = "wasm32"))]
 use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use std::path::{Path, PathBuf};
 
@@ -39,6 +40,7 @@ pub fn initialize_log_file(specified_file: Option<PathBuf>) {
 /// 5. subdirectory of path to helix executable (always included)
 ///
 /// Postcondition: returns at least two paths (they might not exist).
+#[cfg(not(target_arch = "wasm32"))]
 fn prioritize_runtime_dirs() -> Vec<PathBuf> {
     const RT_DIR: &str = "runtime";
     // Adding higher priority first
@@ -75,6 +77,11 @@ fn prioritize_runtime_dirs() -> Vec<PathBuf> {
         .unwrap();
     rt_dirs.push(exe_rt_dir);
     rt_dirs
+}
+
+#[cfg(target_arch = "wasm32")]
+fn prioritize_runtime_dirs() -> Vec<PathBuf> {
+    vec![PathBuf::from("/helix/runtime")]
 }
 
 /// Runtime directories ordered from highest to lowest priority
@@ -117,6 +124,7 @@ pub fn runtime_file(rel_path: impl AsRef<Path>) -> PathBuf {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn config_dir() -> PathBuf {
     // TODO: allow env var override
     let strategy = choose_base_strategy().expect("Unable to find the config directory!");
@@ -125,6 +133,12 @@ pub fn config_dir() -> PathBuf {
     path
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn config_dir() -> PathBuf {
+    PathBuf::from("/helix/config")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn cache_dir() -> PathBuf {
     // TODO: allow env var override
     let strategy = choose_base_strategy().expect("Unable to find the cache directory!");
@@ -133,11 +147,22 @@ pub fn cache_dir() -> PathBuf {
     path
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn cache_dir() -> PathBuf {
+    PathBuf::from("/helix/cache")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> PathBuf {
     let strategy = choose_base_strategy().expect("Unable to find the data directory!");
     let mut path = strategy.data_dir();
     path.push("helix");
     path
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn data_dir() -> PathBuf {
+    PathBuf::from("/helix/data")
 }
 
 pub fn config_file() -> PathBuf {
@@ -286,8 +311,9 @@ fn default_config_file() -> PathBuf {
     config_dir().join("config.toml")
 }
 
-fn ensure_parent_dir(path: &Path) {
-    if let Some(parent) = path.parent() {
+fn ensure_parent_dir(_path: &Path) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(parent) = _path.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent).ok();
         }
