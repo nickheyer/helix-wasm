@@ -12,18 +12,24 @@ homepage.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+helix-stdx = { path = "../helix-stdx", features = ["tokio"] }
 foldhash.workspace = true
 hashbrown = "0.16"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
-# the event registry is essentially read only but must be an rwlock so we can
-# setup new events on initialization, hardware-lock-elision hugely benefits this case
-# as it essentially makes the lock entirely free as long as there is no writes 
+# hardware-lock-elision is a no-op on wasm32 (single-threaded) but harmless
 parking_lot = { workspace = true, features = ["hardware-lock-elision"] }
 once_cell = "1.21"
 
 anyhow = "1"
 log = "0.4"
 futures-executor = "0.3.32"
+futures-core = "0.3"
+tokio-stream = { version = "0.1", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
 
 [features]
 integration_test = []

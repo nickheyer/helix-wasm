@@ -20,7 +20,13 @@ impl Uri {
     #[allow(clippy::result_unit_err)]
     pub fn to_url(&self) -> Result<url::Url, ()> {
         match self {
+            #[cfg(not(target_arch = "wasm32"))]
             Uri::File(path) => url::Url::from_file_path(path),
+            #[cfg(target_arch = "wasm32")]
+            Uri::File(path) => {
+                let path_str = path.to_string_lossy();
+                url::Url::parse(&format!("file://{path_str}")).map_err(|_| ())
+            }
         }
     }
 
@@ -79,9 +85,17 @@ impl std::error::Error for UrlConversionError {}
 
 fn convert_url_to_uri(url: &url::Url) -> Result<Uri, UrlConversionErrorKind> {
     if url.scheme() == "file" {
-        url.to_file_path()
-            .map(|path| Uri::File(helix_stdx::path::normalize(path).into()))
-            .map_err(|_| UrlConversionErrorKind::UnableToConvert)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            url.to_file_path()
+                .map(|path| Uri::File(helix_stdx::path::normalize(path).into()))
+                .map_err(|_| UrlConversionErrorKind::UnableToConvert)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let path = PathBuf::from(url.path());
+            Ok(Uri::File(helix_stdx::path::normalize(path).into()))
+        }
     } else {
         Err(UrlConversionErrorKind::UnsupportedScheme)
     }

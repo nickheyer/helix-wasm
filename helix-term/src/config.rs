@@ -5,7 +5,6 @@ use helix_view::{document::Mode, theme};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::fs;
 use std::io::Error as IOError;
 use toml::de::Error as TomlError;
 
@@ -119,8 +118,8 @@ impl Config {
 
     pub fn load_default() -> Result<Config, ConfigLoadError> {
         let global_config =
-            fs::read_to_string(helix_loader::config_file()).map_err(ConfigLoadError::Error)?;
-        let local_config = fs::read_to_string(helix_loader::workspace_config_file())
+            helix_vfs::read_to_string(helix_loader::config_file()).map_err(ConfigLoadError::Error)?;
+        let local_config = helix_vfs::read_to_string(helix_loader::workspace_config_file())
             .map_err(ConfigLoadError::Error);
 
         let phony_config = ConfigLoadError::Error(IOError::other("hacky placeholder"));

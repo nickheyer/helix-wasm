@@ -40,6 +40,7 @@ pub use redraw::{
 pub use registry::Event;
 
 mod cancel;
+pub mod channel;
 mod debounce;
 mod hook;
 mod redraw;

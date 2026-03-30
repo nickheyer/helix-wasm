@@ -1,0 +1,35 @@
+#pragma once
+#include <vector>
+#include <algorithm>
+
+namespace std {
+    template<class T>
+    class set {
+        vector<T> _data;
+    public:
+        using iterator = typename vector<T>::iterator;
+        using const_iterator = typename vector<T>::const_iterator;
+
+        set() = default;
+        set(initializer_list<T> il) { for (auto& x : il) insert(x); }
+
+        pair<iterator, bool> insert(const T& v) {
+            auto it = lower_bound(_data.begin(), _data.end(), v);
+            if (it != _data.end() && *it == v) return {it, false};
+            return {_data.insert(it, v), true};
+        }
+
+        iterator find(const T& v) { auto it = lower_bound(_data.begin(), _data.end(), v); return (it != _data.end() && *it == v) ? it : _data.end(); }
+        unsigned long count(const T& v) const { auto it = lower_bound(_data.begin(), _data.end(), v); return (it != _data.end() && *it == v) ? 1 : 0; }
+        bool contains(const T& v) const { return count(v) > 0; }
+
+        unsigned long size() const { return _data.size(); }
+        bool empty() const { return _data.empty(); }
+        void clear() { _data.clear(); }
+
+        iterator begin() { return _data.begin(); }
+        iterator end() { return _data.end(); }
+        const_iterator begin() const { return _data.begin(); }
+        const_iterator end() const { return _data.end(); }
+    };
+}

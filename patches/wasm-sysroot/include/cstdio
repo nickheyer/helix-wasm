@@ -1,0 +1,40 @@
+// cstdio for wasm32-unknown-unknown
+#ifndef _CSTDIO
+#define _CSTDIO
+#include <stdio.h>
+namespace std {
+    using ::size_t;
+    using ::FILE;
+    using ::fpos_t;
+    using ::stdin;
+    using ::stdout;
+    using ::stderr;
+    using ::printf;
+    using ::fprintf;
+    using ::sprintf;
+    using ::snprintf;
+    using ::vprintf;
+    using ::vfprintf;
+    using ::vsprintf;
+    using ::vsnprintf;
+    using ::fgetc;
+    using ::fgets;
+    using ::fputc;
+    using ::fputs;
+    using ::putchar;
+    using ::puts;
+    using ::fopen;
+    using ::fclose;
+    using ::fflush;
+    using ::fread;
+    using ::fwrite;
+    using ::fseek;
+    using ::ftell;
+    using ::rewind;
+    using ::feof;
+    using ::ferror;
+    using ::remove;
+    using ::rename;
+    using ::perror;
+}
+#endif

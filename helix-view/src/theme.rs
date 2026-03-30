@@ -189,7 +189,7 @@ impl Loader {
     }
 
     pub fn read_names(path: &Path) -> Vec<String> {
-        std::fs::read_dir(path)
+        helix_vfs::read_dir(path)
             .map(|entries| {
                 entries
                     .filter_map(|entry| {
@@ -231,7 +231,7 @@ impl Loader {
 
     // Loads the theme data as `toml::Value`
     fn load_toml(&self, path: PathBuf) -> Result<Value> {
-        let data = std::fs::read_to_string(path)?;
+        let data = helix_vfs::read_to_string(path)?;
         let value = toml::from_str(&data)?;
 
         Ok(value)
@@ -248,7 +248,7 @@ impl Loader {
             .iter()
             .find_map(|dir| {
                 let path = dir.join(&filename);
-                if !path.exists() {
+                if !helix_vfs::exists(&path) {
                     None
                 } else if visited_paths.contains(&path) {
                     // Avoiding cycle, continuing to look in lower priority directories

@@ -502,8 +502,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a49c392881ce6d5c3b8cb70f98717b7c07aabbdff06687b9030dbfbe2725f8"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi 0.13.3+wasi-0.2.2",
+ "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
 
@@ -1384,6 +1386,7 @@ dependencies = [
  "helix-loader",
  "helix-parsec",
  "helix-stdx",
+ "helix-vfs",
  "imara-diff 0.2.0",
  "indoc",
  "log",
@@ -1443,12 +1446,15 @@ version = "25.7.1"
 dependencies = [
  "anyhow",
  "foldhash 0.2.0",
+ "futures-core",
  "futures-executor",
  "hashbrown 0.16.1",
+ "helix-stdx",
  "log",
  "once_cell",
  "parking_lot",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -1459,6 +1465,7 @@ dependencies = [
  "cc",
  "etcetera",
  "helix-stdx",
+ "helix-vfs",
  "log",
  "once_cell",
  "serde",
@@ -1481,6 +1488,7 @@ dependencies = [
  "helix-loader",
  "helix-lsp-types",
  "helix-stdx",
+ "helix-vfs",
  "log",
  "parking_lot",
  "serde",
@@ -1513,13 +1521,18 @@ dependencies = [
  "bitflags",
  "dunce",
  "etcetera",
+ "js-sys",
  "once_cell",
+ "open",
  "regex-automata",
  "regex-cursor",
  "ropey",
  "rustix 1.1.4",
  "tempfile",
+ "tokio",
  "unicode-segmentation",
+ "wasm-bindgen",
+ "web-time",
  "which",
  "windows-sys 0.61.2",
 ]
@@ -1536,6 +1549,7 @@ dependencies = [
  "dashmap",
  "fern",
  "futures-util",
+ "getrandom 0.3.1",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
@@ -1547,6 +1561,7 @@ dependencies = [
  "helix-stdx",
  "helix-tui",
  "helix-vcs",
+ "helix-vfs",
  "helix-view",
  "ignore",
  "indexmap",
@@ -1555,7 +1570,6 @@ dependencies = [
  "log",
  "nucleo",
  "once_cell",
- "open",
  "parking_lot",
  "pulldown-cmark",
  "same-file",
@@ -1572,6 +1586,8 @@ dependencies = [
  "tokio-stream",
  "toml",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1588,6 +1604,7 @@ dependencies = [
  "termina",
  "termini",
  "unicode-segmentation",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1599,11 +1616,22 @@ dependencies = [
  "gix",
  "helix-core",
  "helix-event",
+ "helix-stdx",
  "imara-diff 0.2.0",
  "log",
  "parking_lot",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "helix-vfs"
+version = "25.7.1"
+dependencies = [
+ "helix-stdx",
+ "ignore",
+ "log",
+ "parking_lot",
 ]
 
 [[package]]
@@ -1617,6 +1645,7 @@ dependencies = [
  "clipboard-win",
  "crossterm",
  "futures-util",
+ "getrandom 0.3.1",
  "helix-core",
  "helix-dap",
  "helix-event",
@@ -1625,6 +1654,7 @@ dependencies = [
  "helix-stdx",
  "helix-tui",
  "helix-vcs",
+ "helix-vfs",
  "kstring",
  "libc",
  "log",
@@ -1641,6 +1671,26 @@ dependencies = [
  "tokio-stream",
  "toml",
  "url",
+]
+
+[[package]]
+name = "helix-wasm"
+version = "25.7.1"
+dependencies = [
+ "anyhow",
+ "getrandom 0.3.1",
+ "helix-core",
+ "helix-event",
+ "helix-loader",
+ "helix-term",
+ "helix-vfs",
+ "helix-view",
+ "js-sys",
+ "log",
+ "tokio",
+ "tree-house",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1950,9 +2000,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.80"
+version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "852f13bec5eba4ba9afbeb93fd7c13fe56147f055939ae21c43a29a0ecb2702e"
+checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -2101,8 +2151,6 @@ checksum = "9737e026353e5cd0736f98eddae28665118eb6f6600902a7f50db585621fecb6"
 [[package]]
 name = "nucleo"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
 dependencies = [
  "nucleo-matcher",
  "parking_lot",
@@ -2980,8 +3028,6 @@ dependencies = [
 [[package]]
 name = "tree-house-bindings"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbbcbb59cca301d903c11b48b722b7c85f0e0001be2f65655cd417d98c6f3121"
 dependencies = [
  "cc",
  "libloading",
@@ -3156,22 +3202,21 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.103"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab10a69fbd0a177f5f649ad4d8d3305499c42bab9aef2f7ff592d0ec8f833819"
+checksum = "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"
 dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
  "wasm-bindgen-macro",
- "wasm-bindgen-shared",
 ]
 
 [[package]]
 name = "wasm-bindgen-backend"
-version = "0.2.103"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bb702423545a6007bbc368fde243ba47ca275e549c8a28617f56f6ba53b1d1c"
+checksum = "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"
 dependencies = [
  "bumpalo",
  "log",
@@ -3182,10 +3227,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-bindgen-macro"
-version = "0.2.103"
+name = "wasm-bindgen-futures"
+version = "0.4.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc65f4f411d91494355917b605e1480033152658d71f722a90647f56a70c88a0"
+checksum = "555d470ec0bc3bb57890405e5d4322cc9ea83cebb085523ced7be4144dac1e61"
+dependencies = [
+ "cfg-if",
+ "js-sys",
+ "once_cell",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "wasm-bindgen-macro"
+version = "0.2.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -3193,9 +3251,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.103"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffc003a991398a8ee604a401e194b6b3a39677b3173d6e74495eb51b82e99a32"
+checksum = "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3206,9 +3264,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.103"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293c37f4efa430ca14db3721dfbe48d8c33308096bd44d80ebaa775ab71ba1cf"
+checksum = "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
 dependencies = [
  "unicode-ident",
 ]
@@ -3245,6 +3303,26 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "web-sys"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b6dd2ef9186f1f2072e409e99cd22a975331a6b3591b12c764e0e55c60d5d2"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

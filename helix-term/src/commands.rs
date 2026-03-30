@@ -4,6 +4,7 @@ pub(crate) mod syntax;
 pub(crate) mod typed;
 
 pub use dap::*;
+pub use syntax::*;
 use futures_util::FutureExt;
 use helix_event::status;
 use helix_stdx::{
@@ -12,7 +13,6 @@ use helix_stdx::{
 };
 use helix_vcs::{FileChange, Hunk};
 pub use lsp::*;
-pub use syntax::*;
 use tui::{
     text::{Span, Spans},
     widgets::Cell,
@@ -64,10 +64,10 @@ use movement::Movement;
 
 use crate::{
     compositor::{self, Component, Compositor},
-    filter_picker_entry,
     job::Callback,
     ui::{self, overlay::overlaid, Picker, PickerColumn, Popup, Prompt, PromptEvent},
 };
+use crate::filter_picker_entry;
 
 use crate::job::{self, Jobs};
 use std::{
@@ -92,7 +92,7 @@ use url::Url;
 
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{sinks, BinaryDetection, SearcherBuilder};
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use helix_vfs::{WalkBuilder, WalkEntry, WalkState};
 
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyEvent)>;
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1362,7 +1362,15 @@ fn resolve_document_link_target(
     }
 
     let future = language_server.resolve_document_link(link.link.clone())?;
-    helix_lsp::block_on(future).ok()?.target
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        helix_lsp::block_on(future).ok()?.target
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = future;
+        None
+    }
 }
 
 /// Goto files/URLs in selection.
@@ -1452,7 +1460,7 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
 
         let path = path::expand(&sel);
         let path = &rel_path.join(path);
-        if path.is_dir() {
+        if helix_vfs::is_dir(path) {
             let picker = ui::file_picker(cx.editor, path.into());
             cx.push_layer(Box::new(overlaid(picker)));
         } else if let Err(e) = cx.editor.open(path, action) {
@@ -1474,11 +1482,10 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
         return cx.jobs.callback(crate::open_external_url_callback(url));
     }
 
-    let content_type = std::fs::File::open(url.path()).and_then(|file| {
+    let content_type = helix_vfs::read(url.path()).and_then(|bytes| {
         // Read up to 1kb to detect the content type
-        let mut read_buffer = Vec::new();
-        let n = file.take(1024).read_to_end(&mut read_buffer)?;
-        Ok(content_inspector::inspect(&read_buffer[..n]))
+        let n = bytes.len().min(1024);
+        Ok(content_inspector::inspect(&bytes[..n]))
     });
 
     // we attempt to open binary files - files that can't be open in helix - using external
@@ -1489,7 +1496,7 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
         }
         Ok(_) | Err(_) => {
             let path = &rel_path.join(url.path());
-            if path.is_dir() {
+            if helix_vfs::is_dir(path) {
                 let picker = ui::file_picker(cx.editor, path.into());
                 cx.push_layer(Box::new(overlaid(picker)));
             } else if let Err(e) = cx.editor.open(path, action) {
@@ -2545,7 +2552,7 @@ fn global_search(cx: &mut Context) {
         }
 
         let search_root = helix_stdx::env::current_working_dir();
-        if !search_root.exists() {
+        if !helix_vfs::exists(&search_root) {
             return async { Err(anyhow::anyhow!("Current working directory does not exist")) }
                 .boxed();
         }
@@ -2572,8 +2579,7 @@ fn global_search(cx: &mut Context) {
         };
 
         let dedup_symlinks = config.file_picker_config.deduplicate_links;
-        let absolute_root = search_root
-            .canonicalize()
+        let absolute_root = helix_vfs::canonicalize(&search_root)
             .unwrap_or_else(|_| search_root.clone());
 
         let injector = injector.clone();
@@ -2602,13 +2608,13 @@ fn global_search(cx: &mut Context) {
                     let matcher = matcher.clone();
                     let injector = injector.clone();
                     let documents = &documents;
-                    Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
+                    Box::new(move |entry: std::io::Result<WalkEntry>| -> WalkState {
                         let entry = match entry {
                             Ok(entry) => entry,
                             Err(_) => return WalkState::Continue,
                         };
 
-                        if !entry.path().is_file() {
+                        if !entry.is_file() {
                             return WalkState::Continue;
                         }
 
@@ -2644,8 +2650,10 @@ fn global_search(cx: &mut Context) {
                                     sink,
                                 )
                             }
+                        } else if let Ok(contents) = helix_vfs::read(entry.path()) {
+                            searcher.search_slice(&matcher, &contents, sink)
                         } else {
-                            searcher.search_path(&matcher, entry.path(), sink)
+                            Ok(())
                         };
 
                         if let Err(err) = result {
@@ -3102,7 +3110,7 @@ fn append_mode(cx: &mut Context) {
 
 fn file_picker(cx: &mut Context) {
     let root = find_workspace().0;
-    if !root.exists() {
+    if !helix_vfs::exists(&root) {
         cx.editor.set_error("Workspace directory does not exist");
         return;
     }
@@ -3119,7 +3127,7 @@ fn file_picker_in_current_buffer_directory(cx: &mut Context) {
         Some(path) => path,
         None => {
             let cwd = helix_stdx::env::current_working_dir();
-            if !cwd.exists() {
+            if !helix_vfs::exists(&cwd) {
                 cx.editor.set_error(
                     "Current buffer has no parent and current working directory does not exist",
                 );
@@ -3138,7 +3146,7 @@ fn file_picker_in_current_buffer_directory(cx: &mut Context) {
 
 fn file_picker_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
-    if !cwd.exists() {
+    if !helix_vfs::exists(&cwd) {
         cx.editor
             .set_error("Current working directory does not exist");
         return;
@@ -3149,7 +3157,7 @@ fn file_picker_in_current_directory(cx: &mut Context) {
 
 fn file_explorer(cx: &mut Context) {
     let root = find_workspace().0;
-    if !root.exists() {
+    if !helix_vfs::exists(&root) {
         cx.editor.set_error("Workspace directory does not exist");
         return;
     }
@@ -3168,7 +3176,7 @@ fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
         Some(path) => path,
         None => {
             let cwd = helix_stdx::env::current_working_dir();
-            if !cwd.exists() {
+            if !helix_vfs::exists(&cwd) {
                 cx.editor.set_error(
                     "Current buffer has no parent and current working directory does not exist",
                 );
@@ -3188,7 +3196,7 @@ fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
 
 fn file_explorer_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
-    if !cwd.exists() {
+    if !helix_vfs::exists(&cwd) {
         cx.editor
             .set_error("Current working directory does not exist");
         return;
@@ -3207,7 +3215,7 @@ fn buffer_picker(cx: &mut Context) {
         path: Option<PathBuf>,
         is_modified: bool,
         is_current: bool,
-        focused_at: std::time::Instant,
+        focused_at: helix_stdx::time::Instant,
     }
 
     let new_meta = |doc: &Document| BufferMeta {
@@ -3383,7 +3391,7 @@ fn changed_file_picker(cx: &mut Context) {
     }
 
     let cwd = helix_stdx::env::current_working_dir();
-    if !cwd.exists() {
+    if !helix_vfs::exists(&cwd) {
         cx.editor
             .set_error("Current working directory does not exist");
         return;
@@ -6399,10 +6407,17 @@ fn shell_keep_pipe(cx: &mut Context) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_impl(shell: &[String], cmd: &str, input: Option<Rope>) -> anyhow::Result<Tendril> {
     tokio::task::block_in_place(|| helix_lsp::block_on(shell_impl_async(shell, cmd, input)))
 }
 
+#[cfg(target_arch = "wasm32")]
+fn shell_impl(_shell: &[String], _cmd: &str, _input: Option<Rope>) -> anyhow::Result<Tendril> {
+    bail!("Shell commands are not available on wasm32")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn shell_impl_async(
     shell: &[String],
     cmd: &str,
@@ -6581,7 +6596,7 @@ fn shell_prompt_for_behavior(cx: &mut Context, prompt: Cow<'static, str>, behavi
 }
 
 fn suspend(_cx: &mut Context) {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_arch = "wasm32")))]
     {
         // SAFETY: These are calls to standard POSIX functions.
         // Unsafe is necessary since we are calling outside of Rust.

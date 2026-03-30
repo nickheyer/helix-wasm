@@ -4,6 +4,7 @@ pub mod workspace_trust;
 
 use helix_stdx::{env::current_working_dir, path};
 
+#[cfg(not(target_arch = "wasm32"))]
 use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use std::path::{Path, PathBuf};
 
@@ -39,6 +40,7 @@ pub fn initialize_log_file(specified_file: Option<PathBuf>) {
 /// 5. subdirectory of path to helix executable (always included)
 ///
 /// Postcondition: returns at least two paths (they might not exist).
+#[cfg(not(target_arch = "wasm32"))]
 fn prioritize_runtime_dirs() -> Vec<PathBuf> {
     const RT_DIR: &str = "runtime";
     // Adding higher priority first
@@ -70,11 +72,16 @@ fn prioritize_runtime_dirs() -> Vec<PathBuf> {
     // canonicalize the path in case the executable is symlinked
     let exe_rt_dir = std::env::current_exe()
         .ok()
-        .and_then(|path| std::fs::canonicalize(path).ok())
+        .and_then(|path| helix_vfs::canonicalize(path).ok())
         .and_then(|path| path.parent().map(|path| path.to_path_buf().join(RT_DIR)))
         .unwrap();
     rt_dirs.push(exe_rt_dir);
     rt_dirs
+}
+
+#[cfg(target_arch = "wasm32")]
+fn prioritize_runtime_dirs() -> Vec<PathBuf> {
+    vec![PathBuf::from("/helix/runtime")]
 }
 
 /// Runtime directories ordered from highest to lowest priority
@@ -94,7 +101,7 @@ pub fn runtime_dirs() -> &'static [PathBuf] {
 fn find_runtime_file(rel_path: &Path) -> Option<PathBuf> {
     RUNTIME_DIRS.iter().find_map(|rt_dir| {
         let path = rt_dir.join(rel_path);
-        if path.exists() {
+        if helix_vfs::exists(&path) {
             Some(path)
         } else {
             None
@@ -117,6 +124,7 @@ pub fn runtime_file(rel_path: impl AsRef<Path>) -> PathBuf {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn config_dir() -> PathBuf {
     // TODO: allow env var override
     let strategy = choose_base_strategy().expect("Unable to find the config directory!");
@@ -125,6 +133,12 @@ pub fn config_dir() -> PathBuf {
     path
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn config_dir() -> PathBuf {
+    PathBuf::from("/helix/config")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn cache_dir() -> PathBuf {
     // TODO: allow env var override
     let strategy = choose_base_strategy().expect("Unable to find the cache directory!");
@@ -133,11 +147,22 @@ pub fn cache_dir() -> PathBuf {
     path
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn cache_dir() -> PathBuf {
+    PathBuf::from("/helix/cache")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> PathBuf {
     let strategy = choose_base_strategy().expect("Unable to find the data directory!");
     let mut path = strategy.data_dir();
     path.push("helix");
     path
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn data_dir() -> PathBuf {
+    PathBuf::from("/helix/data")
 }
 
 pub fn config_file() -> PathBuf {
@@ -270,10 +295,10 @@ pub fn find_workspace() -> (PathBuf, bool) {
 pub fn find_workspace_in(dir: impl AsRef<Path>) -> (PathBuf, bool) {
     let dir = dir.as_ref();
     for ancestor in dir.ancestors() {
-        if ancestor.join(".git").exists()
-            || ancestor.join(".svn").exists()
-            || ancestor.join(".jj").exists()
-            || ancestor.join(".helix").exists()
+        if helix_vfs::exists(ancestor.join(".git"))
+            || helix_vfs::exists(ancestor.join(".svn"))
+            || helix_vfs::exists(ancestor.join(".jj"))
+            || helix_vfs::exists(ancestor.join(".helix"))
         {
             return (ancestor.to_owned(), false);
         }
@@ -288,8 +313,8 @@ fn default_config_file() -> PathBuf {
 
 fn ensure_parent_dir(path: &Path) {
     if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).ok();
+        if !helix_vfs::exists(parent) {
+            helix_vfs::create_dir_all(parent).ok();
         }
     }
 }

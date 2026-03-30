@@ -1,53 +1,81 @@
-use anyhow::{Context, Error, Result};
-use helix_loader::VERSION_AND_GIT_HASH;
-use helix_term::application::Application;
-use helix_term::args::Args;
-use helix_term::config::{Config, ConfigLoadError};
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use anyhow::{Context, Error, Result};
+    use helix_loader::VERSION_AND_GIT_HASH;
+    use helix_term::application::Application;
+    use helix_term::args::Args;
+    use helix_term::config::{Config, ConfigLoadError};
 
-fn setup_logging(verbosity: u64) -> Result<()> {
-    let mut base_config = fern::Dispatch::new();
+    pub fn setup_logging(verbosity: u64) -> Result<()> {
+        let mut base_config = fern::Dispatch::new();
 
-    base_config = match verbosity {
-        0 => base_config.level(log::LevelFilter::Warn),
-        1 => base_config.level(log::LevelFilter::Info),
-        2 => base_config.level(log::LevelFilter::Debug),
-        _3_or_more => base_config.level(log::LevelFilter::Trace),
-    };
+        base_config = match verbosity {
+            0 => base_config.level(log::LevelFilter::Warn),
+            1 => base_config.level(log::LevelFilter::Info),
+            2 => base_config.level(log::LevelFilter::Debug),
+            _3_or_more => base_config.level(log::LevelFilter::Trace),
+        };
 
-    // Separate file config so we can include year, month and day in file logs
-    let file_config = fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{} {} [{}] {}",
-                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .chain(fern::log_file(helix_loader::log_file())?);
+        // Separate file config so we can include year, month and day in file logs
+        let file_config = fern::Dispatch::new()
+            .format(|out, message, record| {
+                out.finish(format_args!(
+                    "{} {} [{}] {}",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+                    record.target(),
+                    record.level(),
+                    message
+                ))
+            })
+            .chain(fern::log_file(helix_loader::log_file())?);
 
-    base_config.chain(file_config).apply()?;
+        base_config.chain(file_config).apply()?;
 
-    Ok(())
-}
+        Ok(())
+    }
 
-fn main() -> Result<()> {
-    let exit_code = main_impl()?;
-    std::process::exit(exit_code);
-}
+    pub fn main() -> Result<()> {
+        let exit_code = main_impl()?;
+        std::process::exit(exit_code);
+    }
 
-#[tokio::main]
-async fn main_impl() -> Result<i32> {
-    let args = Args::parse_args().context("could not parse arguments")?;
+    #[tokio::main]
+    async fn main_impl() -> Result<i32> {
+        helix_vfs::register(vec![
+            Box::new(helix_vfs::drivers::native::NativeFs),
+            Box::new(helix_vfs::drivers::memory::InMemoryFs::new()),
+        ]);
 
-    helix_loader::initialize_config_file(args.config_file.clone());
-    helix_loader::initialize_log_file(args.log_file.clone());
+        helix_loader::grammar::init_loader(Box::new(
+            helix_loader::grammar::NativeGrammarLoader,
+        ));
 
-    // Help has a higher priority and should be handled separately.
-    if args.display_help {
-        print!(
-            "\
+        let args = Args::parse_args().context("could not parse arguments")?;
+
+        helix_loader::initialize_config_file(args.config_file.clone());
+        helix_loader::initialize_log_file(args.log_file.clone());
+
+        // Mirror runtime/config/cache/data into non-native drivers so
+        // :fsdriver memory works.
+        {
+            let mut paths: Vec<&std::path::Path> = Vec::new();
+            let rt_dirs = helix_loader::runtime_dirs();
+            for d in rt_dirs {
+                paths.push(d);
+            }
+            let config = helix_loader::config_dir();
+            let cache = helix_loader::cache_dir();
+            let data = helix_loader::data_dir();
+            paths.push(&config);
+            paths.push(&cache);
+            paths.push(&data);
+            helix_vfs::mirror_runtime(&paths);
+        }
+
+        // Help has a higher priority and should be handled separately.
+        if args.display_help {
+            print!(
+                "\
 {} {}
 {}
 {}
@@ -78,83 +106,96 @@ FLAGS:
     +[N]                           Open the first given file at line number N, or the last line, if
                                    N is not specified.
 ",
-            env!("CARGO_PKG_NAME"),
-            VERSION_AND_GIT_HASH,
-            env!("CARGO_PKG_AUTHORS"),
-            env!("CARGO_PKG_DESCRIPTION"),
-            helix_loader::default_log_file().display(),
-        );
-        std::process::exit(0);
-    }
+                env!("CARGO_PKG_NAME"),
+                VERSION_AND_GIT_HASH,
+                env!("CARGO_PKG_AUTHORS"),
+                env!("CARGO_PKG_DESCRIPTION"),
+                helix_loader::default_log_file().display(),
+            );
+            std::process::exit(0);
+        }
 
-    if args.display_version {
-        println!("helix {}", VERSION_AND_GIT_HASH);
-        std::process::exit(0);
-    }
+        if args.display_version {
+            println!("helix {}", VERSION_AND_GIT_HASH);
+            std::process::exit(0);
+        }
 
-    if args.health {
-        if let Err(err) = helix_term::health::print_health(args.health_arg) {
-            // Piping to for example `head -10` requires special handling:
-            // https://stackoverflow.com/a/65760807/7115678
-            if err.kind() != std::io::ErrorKind::BrokenPipe {
-                return Err(err.into());
+        if args.health {
+            if let Err(err) = helix_term::health::print_health(args.health_arg) {
+                // Piping to for example `head -10` requires special handling:
+                // https://stackoverflow.com/a/65760807/7115678
+                if err.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(err.into());
+                }
             }
+
+            std::process::exit(0);
         }
 
-        std::process::exit(0);
-    }
-
-    if args.fetch_grammars {
-        helix_loader::grammar::fetch_grammars()?;
-        return Ok(0);
-    }
-
-    if args.build_grammars {
-        helix_loader::grammar::build_grammars(None)?;
-        return Ok(0);
-    }
-
-    setup_logging(args.verbosity).context("failed to initialize logging")?;
-
-    // NOTE: Set the working directory early so the correct configuration is loaded. Be aware that
-    // Application::new() depends on this logic so it must be updated if this changes.
-    if let Some(path) = &args.working_directory {
-        helix_stdx::env::set_current_working_dir(path)?;
-    } else if let Some((path, _)) = args.files.first().filter(|p| p.0.is_dir()) {
-        // If the first file is a directory, it will be the working directory unless -w was specified
-        helix_stdx::env::set_current_working_dir(path)?;
-    }
-
-    let config = match Config::load_default() {
-        Ok(config) => config,
-        Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-            Config::default()
+        if args.fetch_grammars {
+            helix_loader::grammar::fetch_grammars()?;
+            return Ok(0);
         }
-        Err(ConfigLoadError::Error(err)) => return Err(Error::new(err)),
-        Err(ConfigLoadError::BadConfig(err)) => {
-            eprintln!("Bad config: {}", err);
-            eprintln!("Press <ENTER> to continue with default config");
-            use std::io::Read;
-            let _ = std::io::stdin().read(&mut []);
-            Config::default()
+
+        if args.build_grammars {
+            helix_loader::grammar::build_grammars(None)?;
+            return Ok(0);
         }
-    };
 
-    let lang_loader =
-        helix_core::config::user_lang_loader(config.editor.insecure).unwrap_or_else(|err| {
-            eprintln!("{}", err);
-            eprintln!("Press <ENTER> to continue with default language config");
-            use std::io::Read;
-            // This waits for an enter press.
-            let _ = std::io::stdin().read(&mut []);
-            helix_core::config::default_lang_loader()
-        });
+        setup_logging(args.verbosity).context("failed to initialize logging")?;
 
-    // TODO: use the thread local executor to spawn the application task separately from the work pool
-    let mut app = Application::new(args, config, lang_loader).context("unable to start Helix")?;
-    let mut events = app.event_stream();
+        // NOTE: Set the working directory early so the correct configuration is loaded. Be aware that
+        // Application::new() depends on this logic so it must be updated if this changes.
+        if let Some(path) = &args.working_directory {
+            helix_stdx::env::set_current_working_dir(path)?;
+        } else if let Some((path, _)) = args.files.first().filter(|p| p.0.is_dir()) {
+            // If the first file is a directory, it will be the working directory unless -w was specified
+            helix_stdx::env::set_current_working_dir(path)?;
+        }
 
-    let exit_code = app.run(&mut events).await?;
+        let config = match Config::load_default() {
+            Ok(config) => config,
+            Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                Config::default()
+            }
+            Err(ConfigLoadError::Error(err)) => return Err(Error::new(err)),
+            Err(ConfigLoadError::BadConfig(err)) => {
+                eprintln!("Bad config: {}", err);
+                eprintln!("Press <ENTER> to continue with default config");
+                use std::io::Read;
+                let _ = std::io::stdin().read(&mut []);
+                Config::default()
+            }
+        };
 
-    Ok(exit_code)
+        let lang_loader =
+            helix_core::config::user_lang_loader(config.editor.insecure).unwrap_or_else(|err| {
+                eprintln!("{}", err);
+                eprintln!("Press <ENTER> to continue with default language config");
+                use std::io::Read;
+                // This waits for an enter press.
+                let _ = std::io::stdin().read(&mut []);
+                helix_core::config::default_lang_loader()
+            });
+
+        // TODO: use the thread local executor to spawn the application task separately from the work pool
+        let mut app =
+            Application::new(args, config, lang_loader).context("unable to start Helix")?;
+        let mut events = app.event_stream();
+
+        let exit_code = app.run(&mut events).await?;
+
+        Ok(exit_code)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> anyhow::Result<()> {
+    native::main()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // On wasm32, the editor is initialized from JavaScript.
+    // This main function is intentionally empty.
 }

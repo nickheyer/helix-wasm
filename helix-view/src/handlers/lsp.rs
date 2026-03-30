@@ -230,7 +230,6 @@ impl Editor {
         op: &lsp::ResourceOp,
     ) -> Result<(), ApplyEditErrorKind> {
         use lsp::ResourceOp;
-        use std::fs;
         // NOTE: If `Uri` gets another variant than `Path`, the below `expect`s
         // may no longer be valid.
         match op {
@@ -240,15 +239,15 @@ impl Editor {
                 let ignore_if_exists = op.options.as_ref().is_some_and(|options| {
                     !options.overwrite.unwrap_or(false) && options.ignore_if_exists.unwrap_or(false)
                 });
-                if !ignore_if_exists || !path.exists() {
+                if !ignore_if_exists || !helix_vfs::exists(path) {
                     // Create directory if it does not exist
                     if let Some(dir) = path.parent() {
-                        if !dir.is_dir() {
-                            fs::create_dir_all(dir)?;
+                        if !helix_vfs::is_dir(dir) {
+                            helix_vfs::create_dir_all(dir)?;
                         }
                     }
 
-                    fs::write(path, [])?;
+                    helix_vfs::write(path, [])?;
                     self.language_servers
                         .file_event_handler
                         .file_changed(path.to_path_buf());
@@ -257,7 +256,7 @@ impl Editor {
             ResourceOp::Delete(op) => {
                 let uri = Uri::try_from(&op.uri)?;
                 let path = uri.as_path().expect("URIs are valid paths");
-                if path.is_dir() {
+                if helix_vfs::is_dir(path) {
                     let recursive = op
                         .options
                         .as_ref()
@@ -265,15 +264,15 @@ impl Editor {
                         .unwrap_or(false);
 
                     if recursive {
-                        fs::remove_dir_all(path)?
+                        helix_vfs::remove_dir_all(path)?
                     } else {
-                        fs::remove_dir(path)?
+                        helix_vfs::remove_dir(path)?
                     }
                     self.language_servers
                         .file_event_handler
                         .file_changed(path.to_path_buf());
                 } else if path.is_file() {
-                    fs::remove_file(path)?;
+                    helix_vfs::remove_file(path)?;
                 }
             }
             ResourceOp::Rename(op) => {

@@ -7,9 +7,13 @@
 # This still gets overwritten by RUST_FLAGS though, luckily it shouldn't be necessary
 # to set those most of the time. If downstream does overwrite this its not a huge
 # deal since it will only break tests anyway
-[target."cfg(all())"]
+# Native targets: use lld-compatible flags
+[target."cfg(not(target_arch = \"wasm32\"))"]
 rustflags = ["--cfg", "tokio_unstable", "-C", "target-feature=-crt-static"]
 
+# WASM target: tokio_unstable + getrandom wasm_js backend, no native linker flags
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "tokio_unstable", "--cfg", "getrandom_backend=\"wasm_js\""]
 
 [alias]
 xtask = "run --package xtask --"

@@ -64,7 +64,7 @@ impl DiffProviderRegistry {
         cwd: PathBuf,
         f: impl Fn(Result<FileChange>) -> bool + Send + 'static,
     ) {
-        tokio::task::spawn_blocking(move || {
+        let inner = move || {
             if self
                 .providers
                 .iter()
@@ -73,7 +73,11 @@ impl DiffProviderRegistry {
             {
                 f(Err(anyhow!("no diff provider returns success")));
             }
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::task::spawn_blocking(inner);
+        #[cfg(target_arch = "wasm32")]
+        tokio::spawn(async move { inner() });
     }
 }
 

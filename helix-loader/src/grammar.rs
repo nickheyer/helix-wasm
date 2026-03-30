@@ -1,27 +1,97 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::time::SystemTime;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::mpsc::channel,
-};
-use tempfile::TempPath;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tree_house::tree_sitter::Grammar;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::process::Command;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
+#[cfg(not(target_arch = "wasm32"))]
+use tempfile::TempPath;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(target_os = "macos")]
 const DYLIB_EXTENSION: &str = "dylib";
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(all(unix, not(target_os = "macos")))]
 const DYLIB_EXTENSION: &str = "so";
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(windows)]
 const DYLIB_EXTENSION: &str = "dll";
 
-#[cfg(target_arch = "wasm32")]
-const DYLIB_EXTENSION: &str = "wasm";
+// ── GrammarLoader trait + registry ──────────────────────────────────────────
+
+/// Trait for loading tree-sitter grammars at runtime.
+///
+/// On native, the implementation loads `.so`/`.dylib`/`.dll` shared libraries
+/// via `libloading`. On WASM, a different implementation loads individual
+/// grammar `.wasm` modules via the browser's WebAssembly API.
+///
+/// This abstraction follows the same pattern as `helix_vfs::FsDriver`,
+/// ensuring grammar loading works identically across all platforms.
+pub trait GrammarLoader: Send + Sync {
+    fn load(&self, grammar_name: &str) -> Result<Option<Grammar>>;
+}
+
+static GRAMMAR_LOADER: OnceLock<Box<dyn GrammarLoader>> = OnceLock::new();
+
+/// Register the grammar loader. Call once at startup before any grammar
+/// loading occurs. Panics if called more than once.
+pub fn init_loader(loader: Box<dyn GrammarLoader>) {
+    if GRAMMAR_LOADER.set(loader).is_err() {
+        panic!("grammar loader already initialized");
+    }
+}
+
+/// Load a grammar by name. Delegates to the registered `GrammarLoader`.
+///
+/// If no loader has been registered (e.g. in tests or build scripts),
+/// falls back to the static grammar registry only.
+pub fn get_language(name: &str) -> Result<Option<Grammar>> {
+    match GRAMMAR_LOADER.get() {
+        Some(loader) => loader.load(name),
+        None => {
+            // Fallback for contexts where no loader is registered
+            // (tests, build scripts, etc.)
+            Ok(Grammar::from_static(name))
+        }
+    }
+}
+
+// ── NativeGrammarLoader ─────────────────────────────────────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct NativeGrammarLoader;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl GrammarLoader for NativeGrammarLoader {
+    fn load(&self, name: &str) -> Result<Option<Grammar>> {
+        // First try statically-linked grammars
+        if let Some(grammar) = Grammar::from_static(name) {
+            return Ok(Some(grammar));
+        }
+
+        // Fall back to dynamically-loaded shared libraries
+        let mut rel_library_path = PathBuf::new().join("grammars").join(name);
+        rel_library_path.set_extension(DYLIB_EXTENSION);
+        let library_path = crate::runtime_file(&rel_library_path);
+        if library_path.exists() {
+            let grammar = unsafe { Grammar::new(name, &library_path) }?;
+            return Ok(Some(grammar));
+        }
+
+        Ok(None)
+    }
+}
+
+// ── Config types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Configuration {
@@ -63,29 +133,13 @@ pub enum GrammarSource {
 const BUILD_TARGET: &str = env!("BUILD_TARGET");
 const REMOTE_NAME: &str = "origin";
 
-#[cfg(target_arch = "wasm32")]
-pub fn get_language(name: &str) -> Result<Option<Grammar>> {
-    unimplemented!()
-}
-
 #[cfg(not(target_arch = "wasm32"))]
-pub fn get_language(name: &str) -> Result<Option<Grammar>> {
-    let mut rel_library_path = PathBuf::new().join("grammars").join(name);
-    rel_library_path.set_extension(DYLIB_EXTENSION);
-    let library_path = crate::runtime_file(&rel_library_path);
-    if !library_path.exists() {
-        return Ok(None);
-    }
-
-    let grammar = unsafe { Grammar::new(name, &library_path) }?;
-    Ok(Some(grammar))
-}
-
 fn ensure_git_is_available() -> Result<()> {
     helix_stdx::env::which("git")?;
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fetch_grammars() -> Result<()> {
     ensure_git_is_available()?;
 
@@ -147,6 +201,7 @@ pub fn fetch_grammars() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_grammars(target: Option<String>) -> Result<()> {
     ensure_git_is_available()?;
 
@@ -190,6 +245,7 @@ pub fn build_grammars(target: Option<String>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 // Returns the set of grammar configurations the user requests.
 // Grammars are configured in the default and user `languages.toml` and are
 // merged. The `grammar_selection` key of the config is then used to filter
@@ -216,6 +272,7 @@ fn get_grammar_configs() -> Result<Vec<GrammarConfiguration>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     let config: Configuration = crate::config::user_lang_config(false)
         .context("Could not parse languages.toml")?
@@ -237,6 +294,7 @@ pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_parallel<F, Res>(grammars: Vec<GrammarConfiguration>, job: F) -> Vec<(String, Result<Res>)>
 where
     F: Fn(GrammarConfiguration) -> Result<Res> + Send + 'static + Clone,
@@ -261,16 +319,19 @@ where
     rx.iter().collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum FetchStatus {
     GitUpToDate,
     GitUpdated { revision: String },
     NonGit,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct VendoredGrammar {
     dir: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl VendoredGrammar {
     fn new(grammar: &str) -> Self {
         let dir = crate::runtime_dirs()
@@ -306,7 +367,7 @@ impl VendoredGrammar {
     /// Creates directory and sets it up as a git repo, with remote set correctly.
     fn init(&self, remote: &str) -> Result<()> {
         // Create the grammar directory if needed.
-        fs::create_dir_all(&self.dir).context(format!(
+        helix_vfs::create_dir_all(&self.dir).context(format!(
             "Could not create grammar directory {:?}",
             &self.dir
         ))?;
@@ -326,7 +387,7 @@ impl VendoredGrammar {
 
     /// Removes the grammar directory before initializing again.
     fn reinit(&self, remote: &str) -> Result<()> {
-        fs::remove_dir_all(&self.dir)?;
+        helix_vfs::remove_dir_all(&self.dir)?;
         self.init(remote)?;
         Ok(())
     }
@@ -344,6 +405,7 @@ impl VendoredGrammar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
     let GrammarSource::Git {
         remote, revision, ..
@@ -369,6 +431,7 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
 
 // A wrapper around 'git' commands which returns stdout in success and a
 // helpful error message showing the command, stdout, and stderr in error.
+#[cfg(not(target_arch = "wasm32"))]
 fn git<I, S>(repository_dir: &Path, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -393,11 +456,13 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum BuildStatus {
     AlreadyBuilt,
     Built,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<BuildStatus> {
     let grammar_dir = if let GrammarSource::Local { path } = &grammar.source {
         PathBuf::from(&path)
@@ -436,6 +501,7 @@ fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<
     build_tree_sitter_library(&path, grammar, target)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_tree_sitter_library(
     src_path: &Path,
     grammar: GrammarConfiguration,
@@ -620,6 +686,7 @@ fn build_tree_sitter_library(
     Ok(BuildStatus::Built)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn needs_recompile(
     lib_path: &Path,
     parser_c_path: &Path,
@@ -640,13 +707,14 @@ fn needs_recompile(
     Ok(false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn mtime(path: &Path) -> Result<SystemTime> {
-    Ok(fs::metadata(path)?.modified()?)
+    Ok(helix_vfs::metadata(path)?.modified()?)
 }
 
 /// Gives the contents of a file from a language's `runtime/queries/<lang>`
 /// directory
 pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
     let path = crate::runtime_file(PathBuf::new().join("queries").join(language).join(filename));
-    std::fs::read_to_string(path)
+    helix_vfs::read_to_string(path)
 }

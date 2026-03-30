@@ -460,8 +460,25 @@ mod imp {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+mod imp {
+    use super::*;
+
+    pub fn access(_p: &Path, _mode: AccessMode) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn copy_metadata(_from: &Path, _to: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn hardlink_count(_p: &Path) -> io::Result<u64> {
+        Ok(1)
+    }
+}
+
 // Licensed under MIT from faccess except for `copy_metadata`
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(any(unix, windows, target_arch = "wasm32")))]
 mod imp {
     use super::*;
 
@@ -484,12 +501,16 @@ mod imp {
         }
     }
 
-    pub fn copy_metadata(from: &path, to: &Path) -> io::Result<()> {
+    pub fn copy_metadata(from: &Path, to: &Path) -> io::Result<()> {
         let meta = std::fs::metadata(from)?;
         let perms = meta.permissions();
         std::fs::set_permissions(to, perms)?;
 
         Ok(())
+    }
+
+    pub fn hardlink_count(_p: &Path) -> io::Result<u64> {
+        Ok(1)
     }
 }
 

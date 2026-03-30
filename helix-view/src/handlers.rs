@@ -1,6 +1,6 @@
 use completion::{CompletionEvent, CompletionHandler};
 use helix_event::send_blocking;
-use tokio::sync::mpsc::Sender;
+use helix_event::channel::Sender;
 
 use crate::handlers::lsp::SignatureHelpInvoked;
 use crate::{DocumentId, Editor, ViewId};

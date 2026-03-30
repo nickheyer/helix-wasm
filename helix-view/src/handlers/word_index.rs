@@ -10,8 +10,9 @@ use helix_core::{
 };
 use helix_event::{register_hook, AsyncHook};
 use helix_stdx::rope::RopeSliceExt as _;
+use helix_stdx::time::Instant;
 use parking_lot::RwLock;
-use tokio::{sync::mpsc, time::Instant};
+use helix_event::channel as mpsc;
 
 use crate::{
     events::{ConfigDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen},
@@ -229,7 +230,33 @@ impl WordIndex {
     async fn run(self, mut events: mpsc::UnboundedReceiver<Event>) {
         while let Some(event) = events.recv().await {
             let this = self.clone();
-            tokio::task::spawn_blocking(move || match event {
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::task::spawn_blocking(move || match &event {
+                Event::Insert(text) => {
+                    this.add_document(text);
+                }
+                Event::Update(
+                    _doc,
+                    Change {
+                        old_text,
+                        text,
+                        changes,
+                        ..
+                    },
+                ) => {
+                    this.update_document(old_text, text, changes);
+                }
+                Event::Delete(_doc, text) => {
+                    this.remove_document(text);
+                }
+                Event::Clear => {
+                    this.clear();
+                }
+            })
+            .await
+            .unwrap();
+            #[cfg(target_arch = "wasm32")]
+            match event {
                 Event::Insert(text) => {
                     this.add_document(&text);
                 }
@@ -250,9 +277,7 @@ impl WordIndex {
                 Event::Clear => {
                     this.clear();
                 }
-            })
-            .await
-            .unwrap();
+            }
         }
     }
 }

@@ -188,22 +188,6 @@ pub fn raw_regex_prompt(
     cx.push_layer(Box::new(prompt));
 }
 
-/// We want to exclude files that the editor can't handle yet
-fn get_excluded_types() -> ignore::types::Types {
-    use ignore::types::TypesBuilder;
-    let mut type_builder = TypesBuilder::new();
-    type_builder
-        .add(
-            "compressed",
-            "*.{zip,gz,bz2,zst,lzo,sz,tgz,tbz2,lz,lz4,lzma,lzo,z,Z,xz,7z,rar,cab}",
-        )
-        .expect("Invalid type definition");
-    type_builder.negate("all");
-    type_builder
-        .build()
-        .expect("failed to build excluded_types")
-}
-
 #[derive(Debug)]
 pub struct FilePickerData {
     root: PathBuf,
@@ -212,8 +196,8 @@ pub struct FilePickerData {
 type FilePicker = Picker<PathBuf, FilePickerData>;
 
 pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
-    use ignore::WalkBuilder;
-    use std::time::Instant;
+    use helix_vfs::WalkBuilder;
+    use helix_stdx::time::Instant;
 
     let config = editor.config();
     let data = FilePickerData {
@@ -224,7 +208,7 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     let now = Instant::now();
 
     let dedup_symlinks = config.file_picker.deduplicate_links;
-    let absolute_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+    let absolute_root = helix_vfs::canonicalize(&root).unwrap_or_else(|_| root.clone());
 
     let mut walk_builder = WalkBuilder::new(&root);
 
@@ -241,11 +225,10 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
         .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, dedup_symlinks))
         .add_custom_ignore_filename(helix_loader::config_dir().join("ignore"))
         .add_custom_ignore_filename(".helix/ignore")
-        .types(get_excluded_types())
         .build()
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            if !entry.path().is_file() {
+            if !entry.is_file() {
                 return None;
             }
             Some(entry.into_path())
@@ -283,19 +266,29 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     })
     .with_preview(|_editor, path| Some((path.as_path().into(), None)));
     let injector = picker.injector();
-    let timeout = std::time::Instant::now() + std::time::Duration::from_millis(30);
+    let timeout = helix_stdx::time::Instant::now() + std::time::Duration::from_millis(30);
 
     let mut hit_timeout = false;
     for file in &mut files {
         if injector.push(file).is_err() {
             break;
         }
-        if std::time::Instant::now() >= timeout {
+        if helix_stdx::time::Instant::now() >= timeout {
             hit_timeout = true;
             break;
         }
     }
     if hit_timeout {
+        // On WASM, std::thread::spawn panics — drain remaining files
+        // synchronously. The in-memory VFS is fast enough that this
+        // won't block noticeably.
+        #[cfg(target_arch = "wasm32")]
+        for file in files {
+            if injector.push(file).is_err() {
+                break;
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
             for file in files {
                 if injector.push(file).is_err() {
@@ -358,7 +351,7 @@ pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std
 }
 
 fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)>, std::io::Error> {
-    use ignore::WalkBuilder;
+    use helix_vfs::WalkBuilder;
 
     let config = editor.config();
 
@@ -375,14 +368,12 @@ fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)
         .max_depth(Some(1))
         .add_custom_ignore_filename(helix_loader::config_dir().join("ignore"))
         .add_custom_ignore_filename(".helix/ignore")
-        .types(get_excluded_types())
         .build()
         .filter_map(|entry| {
             entry
                 .map(|entry| {
-                    let path = entry.path();
-                    let is_dir = path.is_dir();
-                    let mut path = path.to_path_buf();
+                    let is_dir = entry.is_dir();
+                    let mut path = entry.into_path();
                     if is_dir && path != root && config.file_explorer.flatten_dirs {
                         while let Some(single_child_directory) = get_child_if_single_dir(&path) {
                             path = single_child_directory;
@@ -405,10 +396,10 @@ fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)
 }
 
 fn get_child_if_single_dir(path: &Path) -> Option<PathBuf> {
-    let mut entries = path.read_dir().ok()?;
+    let mut entries = helix_vfs::read_dir(path).ok()?;
     let entry = entries.next()?.ok()?;
     let entry_path = entry.path();
-    if entries.next().is_none() && entry_path.is_dir() {
+    if entries.next().is_none() && entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
         Some(entry_path)
     } else {
         None
@@ -529,7 +520,7 @@ pub mod completers {
         git_ignore: bool,
     ) -> Vec<Completion> {
         filename_impl(editor, input, git_ignore, |entry| {
-            if entry.path().is_dir() {
+            if entry.is_dir() {
                 FileMatch::AcceptIncomplete
             } else {
                 FileMatch::Accept
@@ -549,6 +540,14 @@ pub mod completers {
         fuzzy_match(input, language_ids, false)
             .into_iter()
             .map(|(name, _)| ((0..), name.to_owned().into()))
+            .collect()
+    }
+
+    pub fn fsdriver(_editor: &Editor, input: &str) -> Vec<Completion> {
+        let names = helix_vfs::driver_names();
+        fuzzy_match(input, names, false)
+            .into_iter()
+            .map(|(name, _)| ((0..), Span::raw(name.to_string())))
             .collect()
     }
 
@@ -578,7 +577,7 @@ pub mod completers {
         git_ignore: bool,
     ) -> Vec<Completion> {
         filename_impl(editor, input, git_ignore, |entry| {
-            if entry.path().is_dir() {
+            if entry.is_dir() {
                 FileMatch::Accept
             } else {
                 FileMatch::Reject
@@ -605,11 +604,11 @@ pub mod completers {
         filter_fn: F,
     ) -> Vec<Completion>
     where
-        F: Fn(&ignore::DirEntry) -> FileMatch,
+        F: Fn(&helix_vfs::WalkEntry) -> FileMatch,
     {
         // Rust's filename handling is really annoying.
 
-        use ignore::WalkBuilder;
+        use helix_vfs::WalkBuilder;
         use std::path::Path;
 
         let is_tilde = input == "~";
@@ -643,7 +642,7 @@ pub mod completers {
 
         let end = input.len()..;
 
-        let files = WalkBuilder::new(&dir)
+        let files = WalkBuilder::new(dir.as_ref())
             .hidden(false)
             .follow_links(false) // We're scanning over depth 1
             .git_ignore(git_ignore)
@@ -657,10 +656,9 @@ pub mod completers {
                         return None;
                     }
 
+                    let is_dir = entry.is_dir();
+                    let is_symlink = entry.path_is_symlink();
                     let path = entry.path();
-                    let is_dir = path.is_dir();
-                    let file_type = entry.file_type();
-                    let is_symlink = file_type.is_some_and(|ft| ft.is_symlink());
                     let mut path = if is_tilde {
                         // if it's a single tilde an absolute path is displayed so that when `TAB` is pressed on
                         // one of the directories the tilde will be replaced with a valid path not with a relative
@@ -739,7 +737,7 @@ pub mod completers {
             };
 
             std::env::split_paths(&path)
-                .filter_map(|path| std::fs::read_dir(path).ok())
+                .filter_map(|path| helix_vfs::read_dir(path).ok())
                 .flatten()
                 .filter_map(|res| {
                     let entry = res.ok()?;

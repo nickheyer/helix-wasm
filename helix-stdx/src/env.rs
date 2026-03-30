@@ -19,19 +19,28 @@ pub fn current_working_dir() -> PathBuf {
         return path.clone();
     }
 
-    // implementation of crossplatform pwd -L
-    // we want pwd -L so that symlinked directories are handled correctly
-    let mut cwd = std::env::current_dir().expect("Couldn't determine current working directory");
+    #[cfg(not(target_arch = "wasm32"))]
+    let cwd = {
+        // implementation of crossplatform pwd -L
+        // we want pwd -L so that symlinked directories are handled correctly
+        let mut cwd =
+            std::env::current_dir().expect("Couldn't determine current working directory");
 
-    let pwd = std::env::var_os("PWD");
-    #[cfg(windows)]
-    let pwd = pwd.or_else(|| std::env::var_os("CD"));
+        let pwd = std::env::var_os("PWD");
+        #[cfg(windows)]
+        let pwd = pwd.or_else(|| std::env::var_os("CD"));
 
-    if let Some(pwd) = pwd.map(PathBuf::from) {
-        if pwd.canonicalize().ok().as_ref() == Some(&cwd) {
-            cwd = pwd;
+        if let Some(pwd) = pwd.map(PathBuf::from) {
+            if pwd.canonicalize().ok().as_ref() == Some(&cwd) {
+                cwd = pwd;
+            }
         }
-    }
+        cwd
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let cwd = PathBuf::from("/home/user");
+
     let mut dst = CWD.write().unwrap();
     *dst = Some(cwd.clone());
 
@@ -41,6 +50,7 @@ pub fn current_working_dir() -> PathBuf {
 /// Update the current working directory.
 pub fn set_current_working_dir(path: impl AsRef<Path>) -> std::io::Result<Option<PathBuf>> {
     let path = crate::path::canonicalize(path);
+    #[cfg(not(target_arch = "wasm32"))]
     std::env::set_current_dir(&path)?;
     let mut cwd = CWD.write().unwrap();
 
@@ -53,11 +63,18 @@ pub fn env_var_is_set(env_var_name: &str) -> bool {
 }
 
 /// Checks if a binary with the given name exists.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn binary_exists<T: AsRef<OsStr>>(binary_name: T) -> bool {
     which::which(binary_name).is_ok()
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn binary_exists<T: AsRef<OsStr>>(_binary_name: T) -> bool {
+    false
+}
+
 /// Attempts to find a binary of the given name. See [which](https://linux.die.net/man/1/which).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn which<T: AsRef<OsStr>>(
     binary_name: T,
 ) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
@@ -65,6 +82,16 @@ pub fn which<T: AsRef<OsStr>>(
     which::which(binary_name).map_err(|err| ExecutableNotFoundError {
         command: binary_name.to_string_lossy().into_owned(),
         inner: err,
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn which<T: AsRef<OsStr>>(
+    binary_name: T,
+) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
+    Err(ExecutableNotFoundError {
+        command: binary_name.as_ref().to_string_lossy().into_owned(),
+        detail: "executables are not available in the browser".into(),
     })
 }
 
@@ -164,12 +191,22 @@ pub fn expand<S: AsRef<OsStr> + ?Sized>(src: &S) -> Cow<'_, OsStr> {
 #[derive(Debug)]
 pub struct ExecutableNotFoundError {
     command: String,
+    #[cfg(not(target_arch = "wasm32"))]
     inner: which::Error,
+    #[cfg(target_arch = "wasm32")]
+    detail: String,
 }
 
 impl std::fmt::Display for ExecutableNotFoundError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "command '{}' not found: {}", self.command, self.inner)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            write!(f, "command '{}' not found: {}", self.command, self.inner)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            write!(f, "command '{}' not found: {}", self.command, self.detail)
+        }
     }
 }
 

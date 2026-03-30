@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    fs,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -34,10 +33,18 @@ pub(crate) fn path_completion(
         get_path_suffix(line_until_cursor, false).and_then(|matched_path| {
             let matched_path = Cow::from(matched_path);
             let path: Cow<_> = if matched_path.starts_with("file://") {
-                Url::from_str(&matched_path)
-                    .ok()
-                    .and_then(|url| url.to_file_path().ok())?
-                    .into()
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    Url::from_str(&matched_path)
+                        .ok()
+                        .and_then(|url| url.to_file_path().ok())?
+                        .into()
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // to_file_path is not available on wasm32
+                    return None;
+                }
             } else {
                 Path::new(&*matched_path).into()
             };
@@ -71,7 +78,7 @@ pub(crate) fn path_completion(
     // TODO: handle properly in the future
     const PRIORITY: i8 = 1;
     let future = move || {
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+        let Ok(read_dir) = helix_vfs::read_dir(&dir_path) else {
             return CompletionResponse {
                 items: CompletionItems::Other(Vec::new()),
                 provider: CompletionProvider::Path,
@@ -91,10 +98,9 @@ pub(crate) fn path_completion(
         let res: Vec<_> = read_dir
             .filter_map(Result::ok)
             .filter_map(|dir_entry| {
-                dir_entry
-                    .metadata()
-                    .ok()
-                    .and_then(|md| Some((dir_entry.file_name().into_string().ok()?, md)))
+                let path = dir_entry.path();
+                let md = helix_vfs::metadata(&path).ok()?;
+                Some((dir_entry.file_name().into_string().ok()?, md))
             })
             .map_while(|(file_name, md)| {
                 if handle.is_canceled() {
@@ -133,11 +139,10 @@ pub(crate) fn path_completion(
 }
 
 #[cfg(unix)]
-fn path_documentation(md: &fs::Metadata, full_path: &Path, kind: &str) -> String {
+fn path_documentation(md: &helix_vfs::Metadata, full_path: &Path, kind: &str) -> String {
     let full_path = fold_home_dir(canonicalize(full_path));
     let full_path_name = full_path.to_string_lossy();
 
-    use std::os::unix::prelude::PermissionsExt;
     let mode = md.permissions().mode();
 
     let perms = [
@@ -159,9 +164,6 @@ fn path_documentation(md: &fs::Metadata, full_path: &Path, kind: &str) -> String
         acc
     });
 
-    // TODO it would be great to be able to individually color the documentation,
-    // but this will likely require a custom doc implementation (i.e. not `lsp::Documentation`)
-    // and/or different rendering in completion.rs
     format!(
         "type: `{kind}`\n\
          permissions: `[{perms}]`\n\
@@ -170,36 +172,25 @@ fn path_documentation(md: &fs::Metadata, full_path: &Path, kind: &str) -> String
 }
 
 #[cfg(not(unix))]
-fn path_documentation(_md: &fs::Metadata, full_path: &Path, kind: &str) -> String {
+fn path_documentation(_md: &helix_vfs::Metadata, full_path: &Path, kind: &str) -> String {
     let full_path = fold_home_dir(canonicalize(full_path));
     let full_path_name = full_path.to_string_lossy();
     format!("type: `{kind}`\nfull path: `{full_path_name}`",)
 }
 
 #[cfg(unix)]
-fn path_kind(md: &fs::Metadata) -> &'static str {
+fn path_kind(md: &helix_vfs::Metadata) -> &'static str {
     if md.is_symlink() {
         "link"
     } else if md.is_dir() {
         "folder"
     } else {
-        use std::os::unix::fs::FileTypeExt;
-        if md.file_type().is_block_device() {
-            "block"
-        } else if md.file_type().is_socket() {
-            "socket"
-        } else if md.file_type().is_char_device() {
-            "char_device"
-        } else if md.file_type().is_fifo() {
-            "fifo"
-        } else {
-            "file"
-        }
+        "file"
     }
 }
 
 #[cfg(not(unix))]
-fn path_kind(md: &fs::Metadata) -> &'static str {
+fn path_kind(md: &helix_vfs::Metadata) -> &'static str {
     if md.is_symlink() {
         "link"
     } else if md.is_dir() {

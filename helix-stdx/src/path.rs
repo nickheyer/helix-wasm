@@ -1,7 +1,13 @@
 //! Functions for working with [Path].
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use etcetera::home_dir;
 use once_cell::sync::Lazy;
+
+#[cfg(target_arch = "wasm32")]
+pub fn home_dir() -> Result<std::path::PathBuf, std::io::Error> {
+    Ok(std::path::PathBuf::from("/home/user"))
+}
 use regex_cursor::{engines::meta::Regex, Input};
 use ropey::RopeSlice;
 
@@ -124,7 +130,14 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
             }
         }
     }
-    dunce::simplified(&ret).to_path_buf()
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dunce::simplified(&ret).to_path_buf()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        ret
+    }
 }
 
 /// Returns the canonical, absolute form of a path with all intermediate components normalized.

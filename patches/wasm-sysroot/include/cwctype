@@ -1,0 +1,28 @@
+// cwctype for wasm32-unknown-unknown
+#ifndef _CWCTYPE
+#define _CWCTYPE
+#include <wctype.h>
+namespace std {
+    using ::wint_t;
+    using ::wctype_t;
+    using ::wctrans_t;
+    using ::iswalnum;
+    using ::iswalpha;
+    using ::iswblank;
+    using ::iswcntrl;
+    using ::iswdigit;
+    using ::iswgraph;
+    using ::iswlower;
+    using ::iswprint;
+    using ::iswpunct;
+    using ::iswspace;
+    using ::iswupper;
+    using ::iswxdigit;
+    using ::towlower;
+    using ::towupper;
+    using ::wctype;
+    using ::iswctype;
+    using ::wctrans;
+    using ::towctrans;
+}
+#endif

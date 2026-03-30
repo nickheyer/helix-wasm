@@ -1,0 +1,54 @@
+#pragma once
+#include <vector>
+#include <utility>
+#include <algorithm>
+
+namespace std {
+    // Minimal sorted-vector map — enough for tree-sitter scanners.
+    template<class K, class V>
+    class map {
+        vector<pair<K,V>> _data;
+        struct cmp { bool operator()(const pair<K,V>& a, const K& k) const { return a.first < k; } };
+    public:
+        using iterator = typename vector<pair<K,V>>::iterator;
+        using const_iterator = typename vector<pair<K,V>>::const_iterator;
+        using value_type = pair<K,V>;
+
+        map() = default;
+        map(initializer_list<value_type> il) { for (auto& p : il) insert(p); }
+
+        V& operator[](const K& key) {
+            auto it = lower_bound(_data.begin(), _data.end(), key, cmp{});
+            if (it != _data.end() && it->first == key) return it->second;
+            it = _data.insert(it, {key, V{}});
+            return it->second;
+        }
+
+        iterator find(const K& key) {
+            auto it = lower_bound(_data.begin(), _data.end(), key, cmp{});
+            if (it != _data.end() && it->first == key) return it;
+            return _data.end();
+        }
+        const_iterator find(const K& key) const {
+            auto it = lower_bound(_data.begin(), _data.end(), key, cmp{});
+            if (it != _data.end() && it->first == key) return it;
+            return _data.end();
+        }
+
+        pair<iterator, bool> insert(const value_type& v) {
+            auto it = lower_bound(_data.begin(), _data.end(), v.first, cmp{});
+            if (it != _data.end() && it->first == v.first) return {it, false};
+            return {_data.insert(it, v), true};
+        }
+
+        unsigned long size() const { return _data.size(); }
+        bool empty() const { return _data.empty(); }
+        void clear() { _data.clear(); }
+        unsigned long count(const K& key) const { return find(key) != end() ? 1 : 0; }
+
+        iterator begin() { return _data.begin(); }
+        iterator end() { return _data.end(); }
+        const_iterator begin() const { return _data.begin(); }
+        const_iterator end() const { return _data.end(); }
+    };
+}

@@ -194,7 +194,7 @@ fn prepare_dap_params(template: &DebugTemplate, params: &[std::borrow::Cow<str>]
             let mut param = x.to_string();
             if let Some(DebugConfigCompletion::Advanced(cfg)) = template.completion.get(i) {
                 if matches!(cfg.completion.as_deref(), Some("filename" | "directory")) {
-                    param = std::fs::canonicalize(x.as_ref())
+                    param = helix_vfs::canonicalize(x.as_ref())
                         .ok()
                         .and_then(|pb| pb.into_os_string().into_string().ok())
                         .unwrap_or_else(|| x.to_string());
@@ -452,8 +452,14 @@ pub fn dap_pause(cx: &mut Context) {
         let debugger = debugger!(editor);
         let request = debugger.pause(thread.id);
         // NOTE: we don't need to set active thread id here because DAP will emit a "stopped" event
+        #[cfg(not(target_arch = "wasm32"))]
         if let Err(e) = block_on(request) {
             editor.set_error(format!("Failed to pause: {}", e));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = request;
+            editor.set_error("DAP not available on wasm");
         }
     })
 }
@@ -536,53 +542,62 @@ pub fn dap_variables(cx: &mut Context) {
         }
     };
 
-    let frame_id = stack_frame.id;
-    let scopes = match block_on(debugger.scopes(frame_id)) {
-        Ok(s) => s,
-        Err(e) => {
-            cx.editor.set_error(format!("Failed to get scopes: {}", e));
-            return;
-        }
-    };
-
-    // TODO: allow expanding variables into sub-fields
-    let mut variables = Vec::new();
-
-    let theme = &cx.editor.theme;
-    let scope_style = theme.get("ui.linenr.selected");
-    let type_style = theme.get("ui.text");
-    let text_style = theme.get("ui.text.focus");
-
-    for scope in scopes.iter() {
-        // use helix_view::graphics::Style;
-        use tui::text::Span;
-        let response = block_on(debugger.variables(scope.variables_reference));
-
-        variables.push(Spans::from(Span::styled(
-            format!("▸ {}", scope.name),
-            scope_style,
-        )));
-
-        if let Ok(vars) = response {
-            variables.reserve(vars.len());
-            for var in vars {
-                let mut spans = Vec::with_capacity(5);
-
-                spans.push(Span::styled(var.name.to_owned(), text_style));
-                if let Some(ty) = var.ty {
-                    spans.push(Span::raw(": "));
-                    spans.push(Span::styled(ty.to_owned(), type_style));
-                }
-                spans.push(Span::raw(" = "));
-                spans.push(Span::styled(var.value.to_owned(), text_style));
-                variables.push(Spans::from(spans));
-            }
-        }
+    #[cfg(target_arch = "wasm32")]
+    {
+        cx.editor.set_error("DAP not available on wasm");
+        return;
     }
 
-    let contents = Text::from(tui::text::Text::from(variables));
-    let popup = Popup::new("dap-variables", contents);
-    cx.replace_or_push_layer("dap-variables", popup);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let frame_id = stack_frame.id;
+        let scopes = match block_on(debugger.scopes(frame_id)) {
+            Ok(s) => s,
+            Err(e) => {
+                cx.editor.set_error(format!("Failed to get scopes: {}", e));
+                return;
+            }
+        };
+
+        // TODO: allow expanding variables into sub-fields
+        let mut variables = Vec::new();
+
+        let theme = &cx.editor.theme;
+        let scope_style = theme.get("ui.linenr.selected");
+        let type_style = theme.get("ui.text");
+        let text_style = theme.get("ui.text.focus");
+
+        for scope in scopes.iter() {
+            // use helix_view::graphics::Style;
+            use tui::text::Span;
+            let response = block_on(debugger.variables(scope.variables_reference));
+
+            variables.push(Spans::from(Span::styled(
+                format!("▸ {}", scope.name),
+                scope_style,
+            )));
+
+            if let Ok(vars) = response {
+                variables.reserve(vars.len());
+                for var in vars {
+                    let mut spans = Vec::with_capacity(5);
+
+                    spans.push(Span::styled(var.name.to_owned(), text_style));
+                    if let Some(ty) = var.ty {
+                        spans.push(Span::raw(": "));
+                        spans.push(Span::styled(ty.to_owned(), type_style));
+                    }
+                    spans.push(Span::raw(" = "));
+                    spans.push(Span::styled(var.value.to_owned(), text_style));
+                    variables.push(Spans::from(spans));
+                }
+            }
+        }
+
+        let contents = Text::from(tui::text::Text::from(variables));
+        let popup = Popup::new("dap-variables", contents);
+        cx.replace_or_push_layer("dap-variables", popup);
+    }
 }
 
 pub fn dap_terminate(cx: &mut Context) {
@@ -727,7 +742,13 @@ pub fn dap_edit_log(cx: &mut Context) {
 
 pub fn dap_switch_thread(cx: &mut Context) {
     thread_picker(cx, |editor, thread| {
+        #[cfg(not(target_arch = "wasm32"))]
         block_on(select_thread_id(editor, thread.id, true));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = thread;
+            editor.set_error("DAP not available on wasm");
+        }
     })
 }
 pub fn dap_switch_stack_frame(cx: &mut Context) {

@@ -149,12 +149,12 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
         let path = helix_stdx::path::expand_tilde(path);
         // If the path is a directory, open a file picker on that directory and update the status
         // message
-        if let Ok(true) = std::fs::canonicalize(&path).map(|p| p.is_dir()) {
+        if let Ok(true) = helix_vfs::canonicalize(&path).map(|p| helix_vfs::is_dir(&p)) {
             let callback = async move {
                 let call: job::Callback = job::Callback::EditorCompositor(Box::new(
                     move |editor: &mut Editor, compositor: &mut Compositor| {
-                        let picker =
-                            ui::file_picker(editor, path.into_owned()).with_default_action(action);
+                        let picker = ui::file_picker(editor, path.into_owned())
+                            .with_default_action(action);
                         compositor.push(Box::new(overlaid(picker)));
                     },
                 ));
@@ -1347,7 +1347,7 @@ fn show_current_directory(
     let cwd = helix_stdx::env::current_working_dir();
     let message = format!("Current working directory is {}", cwd.display());
 
-    if cwd.exists() {
+    if helix_vfs::exists(&cwd) {
         cx.editor.set_status(message);
     } else {
         cx.editor.set_error(format!("{} (deleted)", message));
@@ -2546,6 +2546,7 @@ fn pipe_impl(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_shell_command(
     cx: &mut compositor::Context,
     args: Args,
@@ -2580,6 +2581,18 @@ fn run_shell_command(
     cx.jobs.callback(callback);
 
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_shell_command(
+    _cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Shell commands are not available on wasm32")
 }
 
 fn reset_diff_change(
@@ -2743,15 +2756,15 @@ fn move_buffer_impl(
     // to move the file into that directory.
     let new_path = old_path
         .file_name()
-        .filter(|_| new_path.is_dir())
+        .filter(|_| helix_vfs::is_dir(&new_path))
         .map(|old_file_name| new_path.join(old_file_name))
         .unwrap_or(new_path);
 
-    if old_path.exists() {
+    if helix_vfs::exists(&old_path) {
         if let Some(parent) = new_path.parent() {
-            if !parent.exists() {
+            if !helix_vfs::exists(parent) {
                 if options.force {
-                    std::fs::DirBuilder::new().recursive(true).create(parent)?;
+                    helix_vfs::create_dir_all(parent)?;
                 } else {
                     bail!(
                         "can't move file, parent directory does not exist (use :mv! to create it)"
@@ -2819,13 +2832,13 @@ fn read(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow:
     let path = helix_stdx::path::expand_tilde(PathBuf::from(filename.to_string()));
 
     ensure!(
-        path.exists() && path.is_file(),
+        helix_vfs::exists(&path) && helix_vfs::is_file(&path),
         "path is not a file: {:?}",
         path
     );
 
-    let file = std::fs::File::open(path).map_err(|err| anyhow!("error opening file: {}", err))?;
-    let mut reader = BufReader::new(file);
+    let bytes = helix_vfs::read(path).map_err(|err| anyhow!("error opening file: {}", err))?;
+    let mut reader = BufReader::new(std::io::Cursor::new(bytes));
     let (contents, _, _) = read_to_string(&mut reader, Some(doc.encoding()))
         .map_err(|err| anyhow!("error reading file: {}", err))?;
     let contents = Tendril::from(contents);
@@ -3991,7 +4004,18 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: untrust_workspace,
         completer: CommandCompleter::none(),
         signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
-    }
+    },
+    TypableCommand {
+        name: "fsdriver",
+        aliases: &[],
+        doc: "Switch the active filesystem driver (show current if no argument given).",
+        fun: fsdriver,
+        completer: CommandCompleter::positional(&[completers::fsdriver]),
+        signature: Signature {
+            positionals: (0, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
 ];
 
 pub static TYPABLE_COMMAND_MAP: Lazy<HashMap<&'static str, &'static TypableCommand>> =
@@ -4403,6 +4427,7 @@ fn complete_expansion_kind(content: &str, offset: usize) -> Vec<ui::prompt::Comp
     .collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn trust_workspace(
     cx: &mut compositor::Context,
     args: Args<'_>,
@@ -4419,6 +4444,19 @@ fn trust_workspace(
     lsp_restart(cx, args, event)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn trust_workspace(
+    _cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Workspace trust is not available on wasm32")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn untrust_workspace(
     _cx: &mut compositor::Context,
     _args: Args<'_>,
@@ -4429,5 +4467,44 @@ fn untrust_workspace(
     }
 
     helix_loader::workspace_trust::WorkspaceTrust::load(false).untrust_workspace();
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn untrust_workspace(
+    _cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    anyhow::bail!("Workspace trust is not available on wasm32")
+}
+
+fn fsdriver(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    if args.is_empty() {
+        let active = helix_vfs::active_name();
+        let all = helix_vfs::driver_names();
+        cx.editor.set_status(format!(
+            "active: {active} (available: {})",
+            all.join(", ")
+        ));
+        return Ok(());
+    }
+
+    let name = &args[0];
+    match helix_vfs::set_active(name) {
+        Ok(()) => cx.editor.set_status(format!("switched to fs driver: {name}")),
+        Err(e) => cx.editor.set_error(e),
+    }
     Ok(())
 }

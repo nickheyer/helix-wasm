@@ -2,7 +2,7 @@ use futures_util::stream::FuturesUnordered;
 use std::collections::HashSet;
 use std::mem;
 use std::time::Duration;
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 use tokio_stream::StreamExt;
 
 use helix_core::diagnostic::DiagnosticProvider;
@@ -110,8 +110,8 @@ impl helix_event::AsyncHook for PullDiagnosticsHandler {
     fn handle_event(
         &mut self,
         event: Self::Event,
-        _timeout: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
+        _timeout: Option<Instant>,
+    ) -> Option<Instant> {
         self.document_ids.insert(event.document_id);
         Some(Instant::now() + Duration::from_millis(250))
     }
@@ -137,8 +137,8 @@ impl helix_event::AsyncHook for PullAllDocumentsDiagnosticHandler {
     fn handle_event(
         &mut self,
         event: Self::Event,
-        _timeout: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
+        _timeout: Option<Instant>,
+    ) -> Option<Instant> {
         self.language_servers.extend(&event.language_servers);
         Some(Instant::now() + Duration::from_secs(1))
     }
@@ -240,7 +240,7 @@ fn request_document_diagnostics_for_language_severs(
         }
 
         if !retry_language_servers.is_empty() {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            helix_stdx::time::sleep(Duration::from_millis(500)).await;
 
             job::dispatch(move |editor, _| {
                 request_document_diagnostics_for_language_severs(

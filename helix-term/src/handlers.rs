@@ -24,6 +24,7 @@ mod document_links;
 mod prompt;
 mod signature_help;
 mod snippet;
+#[cfg(not(target_arch = "wasm32"))]
 mod workspace_trust;
 
 pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
@@ -59,6 +60,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
     document_colors::register_hooks(&handlers);
     document_links::register_hooks(&handlers);
     prompt::register_hooks(&handlers);
+    #[cfg(not(target_arch = "wasm32"))]
     workspace_trust::register_hooks(&handlers);
     handlers
 }

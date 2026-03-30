@@ -31,7 +31,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Weak};
-use std::time::SystemTime;
+use helix_stdx::time::SystemTime;
 
 use helix_core::{
     editor_config::EditorConfig,
@@ -203,7 +203,7 @@ pub struct Document {
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
-    pub focused_at: std::time::Instant,
+    pub focused_at: helix_stdx::time::Instant,
 
     pub readonly: bool,
 
@@ -748,7 +748,7 @@ impl Document {
             diff_handle: None,
             config,
             version_control_head: None,
-            focused_at: std::time::Instant::now(),
+            focused_at: helix_stdx::time::Instant::now(),
             readonly: false,
             jump_labels: HashMap::new(),
             document_highlights: HashMap::new(),
@@ -783,7 +783,7 @@ impl Document {
         syn_loader: Arc<ArcSwap<syntax::Loader>>,
     ) -> Result<Self, DocumentOpenError> {
         // If the path is not a regular file (e.g.: /dev/random) it should not be opened.
-        if path.metadata().is_ok_and(|metadata| !metadata.is_file()) {
+        if helix_vfs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
             return Err(DocumentOpenError::IrregularFile);
         }
 
@@ -795,8 +795,9 @@ impl Document {
         encoding = encoding.or(editor_config.encoding);
 
         // Open the file if it exists, otherwise assume it is a new file (and thus empty).
-        let (rope, encoding, has_bom) = if path.exists() {
-            let mut file = std::fs::File::open(path)?;
+        let (rope, encoding, has_bom) = if helix_vfs::exists(path) {
+            let contents = helix_vfs::read(path)?;
+            let mut file = std::io::Cursor::new(contents);
             from_reader(&mut file, encoding)?
         } else {
             let line_ending = editor_config
@@ -838,6 +839,17 @@ impl Document {
     /// to format it nicely.
     // We can't use anyhow::Result here since the output of the future has to be
     // clonable to be used as shared future. So use a custom error type.
+    #[cfg(target_arch = "wasm32")]
+    pub fn format(
+        &self,
+        _editor: &Editor,
+    ) -> Option<BoxFuture<'static, Result<Transaction, FormatterError>>> {
+        // No external formatters or LSP in browser
+        None
+    }
+
+    // clonable to be used as shared future. So use a custom error type.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn format(
         &self,
         editor: &Editor,
@@ -979,6 +991,65 @@ impl Document {
 
     /// The `Document`'s text is encoded according to its encoding and written to the file located
     /// at its `path()`.
+    #[cfg(target_arch = "wasm32")]
+    fn save_impl(
+        &mut self,
+        path: Option<PathBuf>,
+        force: bool,
+    ) -> Result<
+        impl Future<Output = Result<DocumentSavedEvent, anyhow::Error>> + 'static + Send,
+        anyhow::Error,
+    > {
+        let path = match path {
+            Some(path) => helix_stdx::path::canonicalize(path),
+            None => {
+                if self.path.is_none() {
+                    anyhow::bail!("Can't save with no path set!");
+                }
+                self.path.as_ref().unwrap().clone()
+            }
+        };
+        let current_rev = self.get_current_revision();
+        let doc_id = self.id();
+        let text = self.text().clone();
+        let encoding_with_bom_info = (self.encoding, self.has_bom);
+
+        let future = async move {
+            if let Some(parent) = path.parent() {
+                if !helix_vfs::exists(parent) {
+                    if force {
+                        helix_vfs::create_dir_all(parent)?;
+                    } else {
+                        bail!("can't save file, parent directory does not exist (use :w! to create it)");
+                    }
+                }
+            }
+
+            // Encode the document text and write it to the VFS via the
+            // same `to_writer` function the native path uses.
+            let mut buf = Vec::new();
+            to_writer(&mut buf, encoding_with_bom_info, &text).await?;
+            helix_vfs::write(&path, &buf)?;
+
+            let save_time = helix_vfs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or_else(SystemTime::now);
+
+            Ok(DocumentSavedEvent {
+                revision: current_rev,
+                save_time,
+                doc_id,
+                path,
+                text,
+            })
+        };
+        Ok(future)
+    }
+
+    /// The `Document`'s text is encoded according to its encoding and written to the file located
+    /// at its `path()`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_impl(
         &mut self,
         path: Option<PathBuf>,
@@ -1019,12 +1090,11 @@ impl Document {
 
         // We encode the file according to the `Document`'s encoding.
         let future = async move {
-            use tokio::fs;
             if let Some(parent) = path.parent() {
                 // TODO: display a prompt asking the user if the directories should be created
-                if !parent.exists() {
+                if !helix_vfs::exists(parent) {
                     if force {
-                        std::fs::DirBuilder::new().recursive(true).create(parent)?;
+                        helix_vfs::create_dir_all(parent)?;
                     } else {
                         bail!("can't save file, parent directory does not exist (use :w! to create it)");
                     }
@@ -1033,7 +1103,7 @@ impl Document {
 
             // Protect against overwriting changes made externally
             if !force {
-                if let Ok(metadata) = fs::metadata(&path).await {
+                if let Ok(metadata) = helix_vfs::metadata(&path) {
                     if let Ok(mtime) = metadata.modified() {
                         if last_saved_time < mtime {
                             bail!("file modified by an external process, use :w! to overwrite");
@@ -1041,8 +1111,7 @@ impl Document {
                     }
                 }
             }
-            let write_path = tokio::fs::read_link(&path)
-                .await
+            let write_path = helix_vfs::read_link(&path)
                 .ok()
                 .and_then(|p| {
                     if p.is_relative() {
@@ -1062,13 +1131,13 @@ impl Document {
 
             // Assume it is a hardlink to prevent data loss if the metadata cant be read (e.g. on certain Windows configurations)
             let is_hardlink = helix_stdx::faccess::hardlink_count(&write_path).unwrap_or(2) > 1;
-            let is_symlink = match tokio::fs::symlink_metadata(&write_path).await {
+            let is_symlink = match helix_vfs::symlink_metadata(&write_path) {
                 Ok(meta) => meta.is_symlink(),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
                 Err(err) => return Err(err.into()),
             };
             let must_copy = is_hardlink || is_symlink;
-            let backup = if path.exists() && atomic_save {
+            let backup = if helix_vfs::exists(&path) && atomic_save {
                 let path_ = write_path.clone();
                 // hacks: we use tempfile to handle the complex task of creating
                 // non clobbered temporary path for us we don't want
@@ -1081,12 +1150,12 @@ impl Document {
 
                     let backup_path = if must_copy {
                         builder
-                            .make_in(path_.parent()?, |backup| std::fs::copy(&path_, backup))
+                            .make_in(path_.parent()?, |backup| helix_vfs::copy(&path_, backup).map(|_| ()))
                             .ok()?
                             .into_temp_path()
                     } else {
                         builder
-                            .make_in(path_.parent()?, |backup| std::fs::rename(&path_, backup))
+                            .make_in(path_.parent()?, |backup| helix_vfs::rename(&path_, backup))
                             .ok()?
                             .into_temp_path()
                     };
@@ -1108,7 +1177,7 @@ impl Document {
             }
             .await;
 
-            let save_time = match fs::metadata(&write_path).await {
+            let save_time = match helix_vfs::metadata(&write_path) {
                 Ok(metadata) => metadata.modified().map_or(SystemTime::now(), |mtime| mtime),
                 Err(_) => SystemTime::now(),
             };
@@ -1118,7 +1187,7 @@ impl Document {
                     let mut delete = true;
                     if write_result.is_err() {
                         // Restore backup
-                        let _ = tokio::fs::copy(&backup, &write_path).await.map_err(|e| {
+                        let _ = helix_vfs::copy(&backup, &write_path).map_err(|e| {
                             delete = false;
                             log::error!("Failed to restore backup on write failure: {e}")
                         });
@@ -1126,21 +1195,19 @@ impl Document {
 
                     if delete {
                         // Delete backup
-                        let _ = tokio::fs::remove_file(backup)
-                            .await
+                        let _ = helix_vfs::remove_file(backup)
                             .map_err(|e| log::error!("Failed to remove backup file on write: {e}"));
                     }
                 } else if write_result.is_err() {
                     // restore backup
-                    let _ = tokio::fs::rename(&backup, &write_path)
-                        .await
+                    let _ = helix_vfs::rename(&backup, &write_path)
                         .map_err(|e| log::error!("Failed to restore backup on write failure: {e}"));
                 } else {
                     // copy metadata and delete backup
                     let _ = tokio::task::spawn_blocking(move || {
                         let _ = copy_metadata(&backup, &write_path)
                             .map_err(|e| log::error!("Failed to copy metadata on write: {e}"));
-                        let _ = std::fs::remove_file(backup)
+                        let _ = helix_vfs::remove_file(backup)
                             .map_err(|e| log::error!("Failed to remove backup file on write: {e}"));
                     })
                     .await;
@@ -1220,22 +1287,29 @@ impl Document {
     }
 
     pub fn pickup_last_saved_time(&mut self) {
-        self.last_saved_time = match self.path() {
-            Some(path) => match path.metadata() {
-                Ok(metadata) => match metadata.modified() {
-                    Ok(mtime) => mtime,
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.last_saved_time = match self.path() {
+                Some(path) => match helix_vfs::metadata(path) {
+                    Ok(metadata) => match metadata.modified() {
+                        Ok(mtime) => mtime,
+                        Err(err) => {
+                            log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
+                            SystemTime::now()
+                        }
+                    },
                     Err(err) => {
                         log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
                         SystemTime::now()
                     }
                 },
-                Err(err) => {
-                    log::debug!("Could not fetch file system's mtime, falling back to current system time: {}", err);
-                    SystemTime::now()
-                }
-            },
-            None => SystemTime::now(),
-        };
+                None => SystemTime::now(),
+            };
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.last_saved_time = SystemTime::now();
+        }
     }
 
     // Detect if the file is readonly and change the readonly field if necessary (unix only)
@@ -1256,7 +1330,7 @@ impl Document {
         let encoding = self.encoding;
         let path = match self.path() {
             None => return Ok(()),
-            Some(path) => match path.exists() {
+            Some(path) => match helix_vfs::exists(path) {
                 true => path.to_owned(),
                 false => bail!("can't find file to reload from {:?}", self.display_name()),
             },
@@ -1265,7 +1339,8 @@ impl Document {
         // Once we have a valid path we check if its readonly status has changed
         self.detect_readonly();
 
-        let mut file = std::fs::File::open(&path)?;
+        let contents = helix_vfs::read(&path)?;
+        let mut file = std::io::Cursor::new(contents);
         let (rope, ..) = from_reader(&mut file, Some(encoding))?;
 
         // Calculate the difference between the buffer and source text, and apply it.
@@ -1399,7 +1474,7 @@ impl Document {
 
     /// Mark document as recent used for MRU sorting
     pub fn mark_as_focused(&mut self) {
-        self.focused_at = std::time::Instant::now();
+        self.focused_at = helix_stdx::time::Instant::now();
     }
 
     /// Remove a view's selection and inlay hints from this document.
@@ -2002,7 +2077,7 @@ impl Document {
 
     /// File path as a URL.
     pub fn url(&self) -> Option<Url> {
-        Url::from_file_path(self.path()?).ok()
+        helix_lsp::url_from_file_path(self.path()?).ok()
     }
 
     pub fn uri(&self) -> Option<helix_core::Uri> {

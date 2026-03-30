@@ -1,0 +1,18 @@
+#pragma once
+namespace std {
+    template<class T>
+    class initializer_list {
+        const T* _begin;
+        unsigned long _size;
+        constexpr initializer_list(const T* b, unsigned long s) : _begin(b), _size(s) {}
+    public:
+        using value_type = T;
+        using size_type = unsigned long;
+        using iterator = const T*;
+        using const_iterator = const T*;
+        constexpr initializer_list() : _begin(nullptr), _size(0) {}
+        constexpr size_type size() const { return _size; }
+        constexpr const T* begin() const { return _begin; }
+        constexpr const T* end() const { return _begin + _size; }
+    };
+}

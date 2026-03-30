@@ -1,0 +1,43 @@
+#pragma once
+
+namespace std {
+    template<class T> const T& min(const T& a, const T& b) { return b < a ? b : a; }
+    template<class T> const T& max(const T& a, const T& b) { return a < b ? b : a; }
+    template<class T> void swap(T& a, T& b) { T t = static_cast<T&&>(a); a = static_cast<T&&>(b); b = static_cast<T&&>(t); }
+
+    template<class It, class T>
+    It find(It first, It last, const T& v) { for (; first != last; ++first) if (*first == v) return first; return last; }
+
+    template<class It, class Pred>
+    It find_if(It first, It last, Pred p) { for (; first != last; ++first) if (p(*first)) return first; return last; }
+
+    template<class It, class T>
+    It lower_bound(It first, It last, const T& v) {
+        while (first != last) { auto mid = first + (last - first) / 2; if (*mid < v) first = mid + 1; else last = mid; }
+        return first;
+    }
+
+    template<class It, class Cmp>
+    void sort(It first, It last, Cmp cmp) {
+        // Simple insertion sort — grammar arrays are small.
+        for (auto i = first + 1; i < last; ++i) {
+            auto key = static_cast<decltype(*i)&&>(*i);
+            auto j = i;
+            while (j > first && cmp(key, *(j - 1))) { *j = static_cast<decltype(*j)&&>(*(j-1)); --j; }
+            *j = static_cast<decltype(*j)&&>(key);
+        }
+    }
+    template<class It>
+    void sort(It first, It last) { sort(first, last, [](const auto& a, const auto& b){ return a < b; }); }
+
+    template<class It, class T>
+    void fill(It first, It last, const T& v) { for (; first != last; ++first) *first = v; }
+
+    template<class It, class Out>
+    Out copy(It first, It last, Out out) { for (; first != last; ++first, ++out) *out = *first; return out; }
+
+    template<class It, class Pred>
+    bool any_of(It first, It last, Pred p) { for (; first != last; ++first) if (p(*first)) return true; return false; }
+
+    template<class T> T move(T&& v) { return static_cast<T&&>(v); }
+}

@@ -18,7 +18,7 @@ use helix_event::AsyncHook;
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Nucleo};
 use thiserror::Error;
-use tokio::sync::mpsc::Sender;
+use helix_event::channel::Sender;
 use tui::{
     buffer::Buffer as Surface,
     layout::Constraint,
@@ -607,7 +607,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 }
 
                 let path: Arc<Path> = path.into();
-                let preview = std::fs::metadata(&path)
+                let preview = helix_vfs::metadata(&path)
                     .and_then(|metadata| {
                         if metadata.is_dir() {
                             let files = super::directory_content(&path, editor)?;
@@ -631,9 +631,10 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                             if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
                                 return Ok(CachedPreview::LargeFile);
                             }
-                            let content_type = std::fs::File::open(&path).and_then(|file| {
+                            let content_type = helix_vfs::read(&path).and_then(|bytes| {
                                 // Read up to 1kb to detect the content type
-                                let n = file.take(1024).read_to_end(&mut self.read_buffer)?;
+                                let n = bytes.len().min(1024);
+                                self.read_buffer.extend_from_slice(&bytes[..n]);
                                 let content_type =
                                     content_inspector::inspect(&self.read_buffer[..n]);
                                 self.read_buffer.clear();

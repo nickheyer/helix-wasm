@@ -36,34 +36,41 @@ use std::{
     sync::Arc,
 };
 
-#[cfg_attr(windows, allow(unused_imports))]
+#[cfg_attr(any(windows, target_arch = "wasm32"), allow(unused_imports))]
 use anyhow::{Context, Error};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 use {signal_hook::consts::signal, signal_hook_tokio::Signals};
-#[cfg(windows)]
+#[cfg(any(windows, target_arch = "wasm32"))]
 type Signals = futures_util::stream::Empty<()>;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
+#[cfg(all(not(any(windows, target_arch = "wasm32")), not(feature = "integration")))]
 use tui::backend::TerminaBackend;
 
 #[cfg(all(windows, not(feature = "integration")))]
 use tui::backend::CrosstermBackend;
 
+#[cfg(all(target_arch = "wasm32", not(feature = "integration")))]
+use tui::backend::WasmBackend;
+
 #[cfg(feature = "integration")]
 use tui::backend::TestBackend;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
+#[cfg(all(not(any(windows, target_arch = "wasm32")), not(feature = "integration")))]
 type TerminalBackend = TerminaBackend;
 #[cfg(all(windows, not(feature = "integration")))]
 type TerminalBackend = CrosstermBackend<std::io::Stdout>;
+#[cfg(all(target_arch = "wasm32", not(feature = "integration")))]
+type TerminalBackend = WasmBackend;
 #[cfg(feature = "integration")]
 type TerminalBackend = TestBackend;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 type TerminalEvent = termina::Event;
 #[cfg(windows)]
 type TerminalEvent = crossterm::event::Event;
+#[cfg(target_arch = "wasm32")]
+type TerminalEvent = helix_view::input::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
@@ -114,11 +121,13 @@ impl Application {
         theme_parent_dirs.extend(helix_loader::runtime_dirs().iter().cloned());
         let theme_loader = theme::Loader::new(&theme_parent_dirs);
 
-        #[cfg(all(not(windows), not(feature = "integration")))]
+        #[cfg(all(not(any(windows, target_arch = "wasm32")), not(feature = "integration")))]
         let backend = TerminaBackend::new((&config.editor).into())
             .context("failed to create terminal backend")?;
         #[cfg(all(windows, not(feature = "integration")))]
         let backend = CrosstermBackend::new(std::io::stdout(), (&config.editor).into());
+        #[cfg(all(target_arch = "wasm32", not(feature = "integration")))]
+        let backend = WasmBackend::new(80, 24);
 
         #[cfg(feature = "integration")]
         let backend = TestBackend::new(120, 150);
@@ -158,8 +167,15 @@ impl Application {
 
             // If the first file is a directory, skip it and open a picker
             if let Some((first, _)) = files_it.next_if(|(p, _)| p.is_dir()) {
-                let picker = ui::file_picker(&editor, first);
-                compositor.push(Box::new(overlaid(picker)));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let picker = ui::file_picker(&editor, first);
+                    compositor.push(Box::new(overlaid(picker)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = first;
+                }
             }
 
             // If there are any more files specified, open them
@@ -239,9 +255,9 @@ impl Application {
                 .unwrap_or_else(|_| editor.new_file(Action::VerticalSplit));
         }
 
-        #[cfg(windows)]
+        #[cfg(any(windows, target_arch = "wasm32"))]
         let signals = futures_util::stream::empty();
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_arch = "wasm32")))]
         let signals = Signals::new([
             signal::SIGTSTP,
             signal::SIGCONT,
@@ -499,13 +515,13 @@ impl Application {
         let _ = editor.set_theme(theme);
     }
 
-    #[cfg(windows)]
-    // no signal handling available on windows
+    #[cfg(any(windows, target_arch = "wasm32"))]
+    // no signal handling available on windows or wasm32
     pub async fn handle_signals(&mut self, _signal: ()) -> bool {
         true
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_arch = "wasm32")))]
     pub async fn handle_signals(&mut self, signal: i32) -> bool {
         match signal {
             signal::SIGTSTP => {
@@ -692,7 +708,7 @@ impl Application {
     }
 
     pub async fn handle_terminal_events(&mut self, event: std::io::Result<TerminalEvent>) {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_arch = "wasm32")))]
         use termina::escape::csi;
 
         let mut cx = crate::compositor::Context {
@@ -702,7 +718,7 @@ impl Application {
         };
         // Handle key events
         let should_redraw = match event.unwrap() {
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_arch = "wasm32")))]
             termina::Event::WindowResized(termina::WindowSize { rows, cols, .. }) => {
                 self.terminal
                     .resize(Rect::new(0, 0, cols, rows))
@@ -715,13 +731,13 @@ impl Application {
                 self.compositor
                     .handle_event(&Event::Resize(cols, rows), &mut cx)
             }
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_arch = "wasm32")))]
             // Ignore keyboard release events.
             termina::Event::Key(termina::event::KeyEvent {
                 kind: termina::event::KeyEventKind::Release,
                 ..
             }) => false,
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_arch = "wasm32")))]
             termina::Event::Csi(csi::Csi::Mode(csi::Mode::ReportTheme(mode))) => {
                 self.theme_mode = Some(mode.into());
                 Self::load_configured_theme(
@@ -751,8 +767,20 @@ impl Application {
                 kind: crossterm::event::KeyEventKind::Release,
                 ..
             }) => false,
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_arch = "wasm32")))]
             event if event.is_escape() => false,
+            #[cfg(target_arch = "wasm32")]
+            Event::Resize(cols, rows) => {
+                self.terminal
+                    .resize(Rect::new(0, 0, cols, rows))
+                    .expect("Unable to resize terminal");
+
+                let area = self.terminal.size();
+                self.compositor.resize(area);
+
+                self.compositor
+                    .handle_event(&Event::Resize(cols, rows), &mut cx)
+            }
             event => self.compositor.handle_event(&event.into(), &mut cx),
         };
 
@@ -1197,7 +1225,10 @@ impl Application {
             ..
         } = params
         {
+            #[cfg(not(target_arch = "wasm32"))]
             self.jobs.callback(crate::open_external_url_callback(uri));
+            #[cfg(target_arch = "wasm32")]
+            let _ = uri;
             return lsp::ShowDocumentResult { success: true };
         };
 
@@ -1259,7 +1290,7 @@ impl Application {
         self.terminal.restore()
     }
 
-    #[cfg(all(not(feature = "integration"), not(windows)))]
+    #[cfg(all(not(feature = "integration"), not(any(windows, target_arch = "wasm32"))))]
     pub fn event_stream(&self) -> impl Stream<Item = std::io::Result<TerminalEvent>> + Unpin {
         use termina::{escape::csi, Terminal as _};
         let reader = self.terminal.backend().terminal().event_reader();
@@ -1276,6 +1307,12 @@ impl Application {
     #[cfg(all(not(feature = "integration"), windows))]
     pub fn event_stream(&self) -> impl Stream<Item = std::io::Result<TerminalEvent>> + Unpin {
         crossterm::event::EventStream::new()
+    }
+
+    #[cfg(all(not(feature = "integration"), target_arch = "wasm32"))]
+    pub fn event_stream(&self) -> impl Stream<Item = std::io::Result<TerminalEvent>> + Unpin {
+        use futures_util::StreamExt;
+        crate::wasm_input::init().map(Ok)
     }
 
     #[cfg(feature = "integration")]

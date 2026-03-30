@@ -1,0 +1,5 @@
+// cassert for wasm32-unknown-unknown
+#ifndef _CASSERT
+#define _CASSERT
+#include <assert.h>
+#endif

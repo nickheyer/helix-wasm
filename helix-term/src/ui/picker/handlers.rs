@@ -5,7 +5,7 @@ use std::{
 };
 
 use helix_event::AsyncHook;
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
 
 use crate::{job, ui::overlay::Overlay};
 
@@ -33,8 +33,8 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
     fn handle_event(
         &mut self,
         path: Self::Event,
-        timeout: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
+        timeout: Option<Instant>,
+    ) -> Option<Instant> {
         if self
             .trigger
             .as_ref()
@@ -77,7 +77,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
             let loader = editor.syn_loader.load();
             let text = doc.text().clone();
 
-            tokio::task::spawn_blocking(move || {
+            let highlight = move || {
                 let syntax = match helix_core::Syntax::new(text.slice(..), language, &loader) {
                     Ok(syntax) => syntax,
                     Err(err) => {
@@ -107,7 +107,11 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
                     doc.replace_diagnostics(diagnostics, &[], None);
                     doc.syntax = Some(syntax);
                 });
-            });
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::task::spawn_blocking(highlight);
+            #[cfg(target_arch = "wasm32")]
+            tokio::spawn(async move { highlight() });
         });
     }
 }

@@ -23,7 +23,7 @@ pub fn user_lang_config(insecure: bool) -> Result<toml::Value, toml::de::Error> 
     let config = files
         .iter()
         .filter_map(|file| {
-            std::fs::read_to_string(file)
+            helix_vfs::read_to_string(file)
                 .map(|config| toml::from_str(&config))
                 .ok()
         })

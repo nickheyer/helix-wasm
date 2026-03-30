@@ -12,7 +12,7 @@ pub mod job;
 pub mod keymap;
 pub mod ui;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 use std::env::var_os;
 
 use std::path::Path;
@@ -20,15 +20,18 @@ use std::path::Path;
 use futures_util::Future;
 mod handlers;
 
-use ignore::DirEntry;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_input;
+
+use helix_vfs::WalkEntry;
 use url::Url;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_arch = "wasm32"))]
 fn true_color() -> bool {
     true
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 fn true_color() -> bool {
     if var_os("COLORTERM").is_some_and(|v| v == "truecolor" || v == "24bit")
         || var_os("WSL_DISTRO_NAME").is_some()
@@ -47,7 +50,7 @@ fn true_color() -> bool {
 }
 
 /// Function used for filtering dir entries in the various file pickers.
-fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
+fn filter_picker_entry(entry: &WalkEntry, root: &Path, dedup_symlinks: bool) -> bool {
     // We always want to ignore popular VCS directories, otherwise if
     // `ignore` is turned off, we end up with a lot of noise
     // in our picker.
@@ -61,9 +64,7 @@ fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> b
     // We also ignore symlinks that point inside the current directory
     // if `dedup_links` is enabled.
     if dedup_symlinks && entry.path_is_symlink() {
-        return entry
-            .path()
-            .canonicalize()
+        return helix_vfs::canonicalize(entry.path())
             .ok()
             .is_some_and(|path| !path.starts_with(root));
     }
@@ -71,20 +72,19 @@ fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> b
     true
 }
 
-/// Opens URL in external program.
+/// Opens URL in external program (native) or browser tab (wasm).
 fn open_external_url_callback(
     url: Url,
 ) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
-    let commands = open::commands(url.as_str());
-    async {
-        for cmd in commands {
-            let mut command: tokio::process::Command = cmd.into();
-            if command.output().await.is_ok() {
-                return Ok(job::Callback::Editor(Box::new(|_| {})));
-            }
+    let url_str = url.to_string();
+    async move {
+        let opened = helix_stdx::open::open_url(&url_str);
+        if opened {
+            Ok(job::Callback::Editor(Box::new(|_| {})))
+        } else {
+            Ok(job::Callback::Editor(Box::new(move |editor| {
+                editor.set_error("Opening URL in external program failed")
+            })))
         }
-        Ok(job::Callback::Editor(Box::new(move |editor| {
-            editor.set_error("Opening URL in external program failed")
-        })))
     }
 }

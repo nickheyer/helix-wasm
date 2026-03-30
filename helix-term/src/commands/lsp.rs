@@ -792,9 +792,12 @@ pub fn code_action(cx: &mut Context) {
                         let mut resolved_code_action = None;
                         if code_action.edit.is_none() || code_action.command.is_none() {
                             if let Some(future) = language_server.resolve_code_action(code_action) {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Ok(code_action) = helix_lsp::block_on(future) {
                                     resolved_code_action = Some(code_action);
                                 }
+                                #[cfg(target_arch = "wasm32")]
+                                let _ = future;
                             }
                         }
                         let resolved_code_action =
@@ -1159,6 +1162,7 @@ pub fn rename_symbol(cx: &mut Context) {
                     .rename_symbol(doc.identifier(), pos, input.to_string())
                     .unwrap();
 
+                #[cfg(not(target_arch = "wasm32"))]
                 match block_on(future) {
                     Ok(edits) => {
                         let _ = cx
@@ -1166,6 +1170,11 @@ pub fn rename_symbol(cx: &mut Context) {
                             .apply_workspace_edit(offset_encoding, &edits.unwrap_or_default());
                     }
                     Err(err) => cx.editor.set_error(err.to_string()),
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = future;
+                    cx.editor.set_error("Rename not available on wasm");
                 }
             },
         )

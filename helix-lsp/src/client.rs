@@ -1,9 +1,10 @@
 use crate::{
     file_operations::FileOperationsInterest,
     find_lsp_workspace, jsonrpc,
-    transport::{Payload, Transport},
+    transport::Payload,
     Call, Error, LanguageServerId, OffsetEncoding, Result,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use log::info;
 
 use crate::lsp::{
@@ -30,14 +31,19 @@ use std::{
     },
 };
 use std::{future::Future, sync::OnceLock};
-use std::{path::Path, process::Stdio};
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::process::Stdio;
+use tokio::sync::{
+    mpsc::{channel, UnboundedReceiver, UnboundedSender},
+    Notify, OnceCell,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::transport::Transport;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::{
     io::{BufReader, BufWriter},
     process::{Child, Command},
-    sync::{
-        mpsc::{channel, UnboundedReceiver, UnboundedSender},
-        Notify, OnceCell,
-    },
 };
 
 fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
@@ -55,6 +61,7 @@ fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
 pub struct Client {
     id: LanguageServerId,
     name: String,
+    #[cfg(not(target_arch = "wasm32"))]
     _process: Child,
     server_tx: UnboundedSender<Payload>,
     request_counter: AtomicU64,
@@ -90,7 +97,7 @@ impl Client {
         );
         let root_uri = root
             .as_ref()
-            .and_then(|root| lsp::Url::from_file_path(root).ok());
+            .and_then(|root| crate::url_from_file_path(root).ok());
 
         if self.root_path == root.unwrap_or(workspace)
             || root_uri.as_ref().is_some_and(|root_uri| {
@@ -204,6 +211,7 @@ impl Client {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub fn start(
         cmd: &str,
@@ -267,6 +275,28 @@ impl Client {
         };
 
         Ok((client, server_rx, initialize_notify))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    pub fn start(
+        _cmd: &str,
+        _args: &[String],
+        _config: Option<Value>,
+        _server_environment: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+        _root_path: PathBuf,
+        _root_uri: Option<lsp::Url>,
+        _id: LanguageServerId,
+        _name: String,
+        _req_timeout: u64,
+    ) -> Result<(
+        Self,
+        UnboundedReceiver<(LanguageServerId, Call)>,
+        Arc<Notify>,
+    )> {
+        Err(Error::Other(anyhow::anyhow!(
+            "Spawning language servers is not supported on wasm32"
+        )))
     }
 
     pub fn name(&self) -> &str {
@@ -486,8 +516,7 @@ impl Client {
             });
 
         async move {
-            use std::time::Duration;
-            use tokio::time::timeout;
+            use helix_stdx::time::{timeout, Duration};
             // TODO: delay other calls until initialize success
             timeout(Duration::from_secs(timeout_secs), rx?.recv())
                 .await
@@ -809,9 +838,9 @@ impl Client {
         }
         let url_from_path = |path| {
             let url = if is_dir {
-                Url::from_directory_path(path)
+                crate::url_from_directory_path(path)
             } else {
-                Url::from_file_path(path)
+                crate::url_from_file_path(path)
             };
             Some(url.ok()?.to_string())
         };
@@ -832,9 +861,9 @@ impl Client {
         }
         let url_from_path = |path| {
             let url = if is_dir {
-                Url::from_directory_path(path)
+                crate::url_from_directory_path(path)
             } else {
-                Url::from_file_path(path)
+                crate::url_from_file_path(path)
             };
             Some(url.ok()?.to_string())
         };

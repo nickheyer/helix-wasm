@@ -10,7 +10,6 @@
 
 use std::{
     collections::HashMap,
-    fs,
     num::{NonZeroU16, NonZeroU8},
     path::Path,
     str::FromStr,
@@ -46,7 +45,7 @@ impl EditorConfig {
         // <https://spec.editorconfig.org/#file-processing>
         for ancestor in path.ancestors() {
             let editor_config_file = ancestor.join(".editorconfig");
-            let Ok(contents) = fs::read_to_string(&editor_config_file) else {
+            let Ok(contents) = helix_vfs::read_to_string(&editor_config_file) else {
                 continue;
             };
             let ini = match contents.parse::<Ini>() {

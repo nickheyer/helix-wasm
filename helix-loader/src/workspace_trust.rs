@@ -1,7 +1,10 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::{collections::HashSet, path::PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::{data_dir, workspace_exclude_file, workspace_trust_file};
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct WorkspaceTrust {
     trusted: HashSet<PathBuf>,
     excluded: Option<HashSet<PathBuf>>,
@@ -13,6 +16,7 @@ pub enum TrustStatus {
     Trusted,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl WorkspaceTrust {
     /// Loads `WorkspaceTrust`.
     ///
@@ -24,7 +28,7 @@ impl WorkspaceTrust {
     pub fn load(with_exclusion: bool) -> Self {
         let mut trusted = HashSet::new();
 
-        match fs::read_to_string(workspace_trust_file()) {
+        match helix_vfs::read_to_string(workspace_trust_file()) {
             Ok(workspace_trust_file) => {
                 for line in workspace_trust_file.split('\n') {
                     if !line.is_empty() {
@@ -39,7 +43,7 @@ impl WorkspaceTrust {
         let excluded = if with_exclusion {
             let mut untrusted = HashSet::new();
 
-            match fs::read_to_string(workspace_exclude_file()) {
+            match helix_vfs::read_to_string(workspace_exclude_file()) {
                 Ok(workspace_untrust_file) => {
                     for line in workspace_untrust_file.split('\n') {
                         if !line.is_empty() {
@@ -65,13 +69,12 @@ impl WorkspaceTrust {
                 trust_text += &format!("{path_str}\n");
             }
         }
-        // let chains aren't supported in current MSRV
-        if let Ok(false) = fs::exists(data_dir()) {
-            if let Err(e) = fs::create_dir_all(data_dir()) {
+        if !helix_vfs::exists(data_dir()) {
+            if let Err(e) = helix_vfs::create_dir_all(data_dir()) {
                 log::error!("Couldn't create helix's data directory: {:?}", e);
             };
         }
-        if let Err(e) = fs::write(workspace_trust_file(), trust_text) {
+        if let Err(e) = helix_vfs::write(workspace_trust_file(), trust_text) {
             log::error!("Error during write of workspace_trust file: {:?}", e);
         }
     }
@@ -85,12 +88,12 @@ impl WorkspaceTrust {
                 }
             }
             // let chains aren't supported in current MSRV
-            if let Ok(false) = fs::exists(data_dir()) {
-                if let Err(e) = fs::create_dir_all(data_dir()) {
+            if !helix_vfs::exists(data_dir()) {
+                if let Err(e) = helix_vfs::create_dir_all(data_dir()) {
                     log::error!("Couldn't create helix's data directory: {:?}", e);
                 };
             }
-            if let Err(e) = fs::write(workspace_exclude_file(), trust_text) {
+            if let Err(e) = helix_vfs::write(workspace_exclude_file(), trust_text) {
                 log::error!("Error during write of workspace_trust file: {:?}", e);
             }
         } else {
@@ -135,13 +138,14 @@ pub enum TrustUntrustStatus {
     AllowAlways,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
     if insecure {
         return TrustStatus::Trusted;
     }
 
     let workspace = crate::find_workspace().0;
-    match fs::read_to_string(workspace_trust_file()) {
+    match helix_vfs::read_to_string(workspace_trust_file()) {
         Ok(workspace_trust_file) => {
             for line in workspace_trust_file.split('\n') {
                 if PathBuf::from(line) == workspace {
@@ -155,13 +159,20 @@ pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
     TrustStatus::Untrusted
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn quick_query_workspace(_insecure: bool) -> TrustStatus {
+    // In the browser, all content is user-provided and trusted
+    TrustStatus::Trusted
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntrustStatus {
     if insecure {
         return TrustUntrustStatus::AllowAlways;
     }
 
     let workspace = crate::find_workspace().0;
-    match fs::read_to_string(workspace_trust_file()) {
+    match helix_vfs::read_to_string(workspace_trust_file()) {
         Ok(workspace_trust_file) => {
             for line in workspace_trust_file.split('\n') {
                 if PathBuf::from(line) == workspace {
@@ -173,7 +184,7 @@ pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntru
         Err(err) => log::error!("workspace_trust file couldn't be read: {err:?}"),
     };
 
-    match fs::read_to_string(workspace_exclude_file()) {
+    match helix_vfs::read_to_string(workspace_exclude_file()) {
         Ok(workspace_untrust_file) => {
             for line in workspace_untrust_file.split('\n') {
                 if PathBuf::from(line) == workspace {
@@ -185,4 +196,9 @@ pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntru
         Err(err) => log::error!("workspace_untrust file couldn't be read: {err:?}"),
     };
     TrustUntrustStatus::DenyOnce
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn quick_query_workspace_with_explicit_untrust(_insecure: bool) -> TrustUntrustStatus {
+    TrustUntrustStatus::AllowAlways
 }

@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use futures_executor::block_on;
-use tokio::sync::mpsc::{self, error::TrySendError, Sender};
-use tokio::time::Instant;
+use helix_stdx::time::Instant;
+use crate::channel::{self as mpsc, error::TrySendError, Sender};
 
 /// Async hooks provide a convenient framework for implementing (debounced)
 /// async event handlers. Most synchronous event hooks will likely need to
@@ -37,11 +37,11 @@ pub trait AsyncHook: Sync + Send + 'static + Sized {
 }
 
 async fn run<Hook: AsyncHook>(mut hook: Hook, mut rx: mpsc::Receiver<Hook::Event>) {
-    let mut deadline = None;
+    let mut deadline: Option<Instant> = None;
     loop {
         let event = match deadline {
             Some(deadline_) => {
-                let res = tokio::time::timeout_at(deadline_, rx.recv()).await;
+                let res = helix_stdx::time::timeout(deadline_.saturating_duration_since(Instant::now()), rx.recv()).await;
                 match res {
                     Ok(event) => event,
                     Err(_) => {
@@ -65,6 +65,14 @@ pub fn send_blocking<T>(tx: &Sender<T>, data: T) {
     // never be full anyway so first try sending without blocking
     if let Err(TrySendError::Full(data)) = tx.try_send(data) {
         // set a timeout so that we just drop a message instead of freezing the editor in the worst case
-        let _ = block_on(tx.send_timeout(data, Duration::from_millis(10)));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = block_on(tx.send_timeout(data, Duration::from_millis(10)));
+        }
+        // On wasm32, block_on + send_timeout would panic (tokio time driver
+        // is not available).  Single-threaded wasm can't truly block anyway,
+        // so just drop the event.
+        #[cfg(target_arch = "wasm32")]
+        drop(data);
     }
 }

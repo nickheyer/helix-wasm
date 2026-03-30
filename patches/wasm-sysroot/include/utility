@@ -1,0 +1,15 @@
+#pragma once
+namespace std {
+    template<class T> T&& move(T& v) { return static_cast<T&&>(v); }
+    template<class T1, class T2>
+    struct pair {
+        T1 first;
+        T2 second;
+        pair() = default;
+        pair(const T1& a, const T2& b) : first(a), second(b) {}
+        bool operator==(const pair& o) const { return first == o.first && second == o.second; }
+        bool operator<(const pair& o) const { return first < o.first || (first == o.first && second < o.second); }
+    };
+    template<class T1, class T2>
+    pair<T1,T2> make_pair(T1 a, T2 b) { return {a, b}; }
+}

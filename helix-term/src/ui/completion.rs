@@ -395,7 +395,11 @@ impl Completion {
             return None;
         }
         let future = language_server.resolve_completion_item(&completion_item);
+        #[cfg(not(target_arch = "wasm32"))]
         let response = helix_lsp::block_on(future);
+        #[cfg(target_arch = "wasm32")]
+        let response: Result<lsp::CompletionItem, _> =
+            Err(anyhow::anyhow!("block_on not available on wasm"));
         match response {
             Ok(item) => Some(item),
             Err(err) => {

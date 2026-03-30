@@ -106,7 +106,7 @@ impl Handler {
                             log::warn!("LSP client was dropped: {id}");
                             return false;
                         };
-                        let Ok(uri) = lsp::Url::from_file_path(&path) else {
+                        let Ok(uri) = crate::url_from_file_path(&path) else {
                             return true;
                         };
                         log::debug!(

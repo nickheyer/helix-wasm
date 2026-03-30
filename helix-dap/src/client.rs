@@ -13,22 +13,29 @@ use anyhow::anyhow;
 use std::{
     collections::HashMap,
     future::Future,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     path::PathBuf,
-    process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
 };
+use tokio::sync::mpsc::{channel, unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    process::Stdio,
+};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::{
     io::{AsyncBufRead, AsyncWrite, BufReader, BufWriter},
     net::TcpStream,
     process::{Child, Command},
-    sync::mpsc::{channel, unbounded_channel, UnboundedReceiver, UnboundedSender},
     time,
 };
 
 #[derive(Debug)]
 pub struct Client {
     id: DebugAdapterId,
+    #[cfg(not(target_arch = "wasm32"))]
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_counter: AtomicU64,
@@ -51,6 +58,7 @@ pub struct Client {
 impl Client {
     // Spawn a process and communicate with it by either TCP or stdio
     // The returned stream includes the Client ID so consumers can differentiate between multiple clients
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn process(
         transport: &str,
         command: &str,
@@ -68,6 +76,18 @@ impl Client {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub async fn process(
+        _transport: &str,
+        _command: &str,
+        _args: Vec<&str>,
+        _port_arg: Option<&str>,
+        _id: DebugAdapterId,
+    ) -> Result<(Self, UnboundedReceiver<(DebugAdapterId, Payload)>)> {
+        Err(Error::Other(anyhow!("process spawning is not supported on wasm")))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn streams(
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
@@ -100,6 +120,7 @@ impl Client {
         Ok((client, client_rx))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn tcp(
         addr: std::net::SocketAddr,
         id: DebugAdapterId,
@@ -109,6 +130,15 @@ impl Client {
         Self::streams(Box::new(BufReader::new(rx)), Box::new(tx), None, id, None)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub async fn tcp(
+        _addr: std::net::SocketAddr,
+        _id: DebugAdapterId,
+    ) -> Result<(Self, UnboundedReceiver<(DebugAdapterId, Payload)>)> {
+        Err(Error::Other(anyhow!("TCP connections are not supported on wasm")))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn stdio(
         cmd: &str,
         args: Vec<&str>,
@@ -142,6 +172,7 @@ impl Client {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn get_port() -> Option<u16> {
         Some(
             tokio::net::TcpListener::bind(SocketAddr::new(
@@ -160,6 +191,7 @@ impl Client {
         self.starting_request_args.as_ref()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn tcp_process(
         cmd: &str,
         args: Vec<&str>,
@@ -260,8 +292,7 @@ impl Client {
         let id = self.next_request_id();
 
         async move {
-            use std::time::Duration;
-            use tokio::time::timeout;
+            use helix_stdx::time::{timeout, Duration};
 
             let arguments = Some(serde_json::to_value(arguments)?);
 

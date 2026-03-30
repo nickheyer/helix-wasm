@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Helix Editor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #282c34; }
+        #terminal { width: 100%; height: 100%; }
+    </style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+    <script type="importmap">
+    {
+        "imports": {
+            "env": "./env.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="terminal"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script type="module">
+        import init, { run_editor, send_key_event, send_resize_event, send_paste_event, grammar_alloc } from './pkg/helix_wasm.js';
+        import * as env from './env.js';
+
+        // ── Grammar loading ──────────────────────────────────────────────
+        //
+        // Grammar .wasm files live in web/grammars/<name>.wasm and are
+        // fetched over HTTP on demand.  They are compiled as shared WASM
+        // modules (wasm-ld --shared) that import the main module's linear
+        // memory so the TSLanguage* pointer is directly usable from Rust.
+        //
+        //   Rust calls loadSync(name)
+        //     → JS checks cache for pre-compiled Module
+        //     → if miss, synchronous XHR to grammars/<name>.wasm
+        //     → parse dylink.0, malloc, instantiate with shared memory
+        //     → call tree_sitter_<name>() → return pointer
+
+        // ── dylink.0 parser ─────────────────────────────────────────────
+
+        function readVaruint(buf, offset) {
+            let result = 0, shift = 0;
+            while (offset < buf.length) {
+                const byte = buf[offset++];
+                result |= (byte & 0x7f) << shift;
+                if ((byte & 0x80) === 0) break;
+                shift += 7;
+            }
+            return { value: result, offset };
+        }
+
+        function parseDylink0(bytes) {
+            const view = new Uint8Array(bytes);
+            let pos = 8; // skip magic + version
+            while (pos < view.length) {
+                const sectionId = view[pos++];
+                const { value: sectionSize, offset: afterSize } = readVaruint(view, pos);
+                pos = afterSize;
+                const sectionEnd = pos + sectionSize;
+                if (sectionId === 0) {
+                    const { value: nameLen, offset: afterNameLen } = readVaruint(view, pos);
+                    const name = new TextDecoder().decode(view.subarray(afterNameLen, afterNameLen + nameLen));
+                    let subPos = afterNameLen + nameLen;
+                    if (name === 'dylink.0') {
+                        let memSize = 0, memAlign = 1, tableSize = 0;
+                        while (subPos < sectionEnd) {
+                            const subType = view[subPos++];
+                            const { value: subSize, offset: afterSubSize } = readVaruint(view, subPos);
+                            subPos = afterSubSize;
+                            if (subType === 1) {
+                                const ms = readVaruint(view, subPos);
+                                memSize = ms.value;
+                                const ma = readVaruint(view, ms.offset);
+                                memAlign = 1 << ma.value;
+                                const ts = readVaruint(view, ma.offset);
+                                tableSize = ts.value;
+                            }
+                            subPos += subSize;
+                        }
+                        return { memSize, memAlign, tableSize };
+                    }
+                }
+                pos = sectionEnd;
+            }
+            return null;
+        }
+
+        // ── Shared-memory instantiation ─────────────────────────────────
+
+        // The main module's function table. Grammar scanner function
+        // pointers must live here so the main module's call_indirect
+        // can reach them.
+        let mainTable = null;
+        let nextTableSlot = 0;
+
+        function getMainTable() {
+            if (mainTable) return mainTable;
+            const exports = env._get_wasm_exports();
+            // Find the funcref table used by call_indirect.
+            // wasm-bindgen exports two tables: funcref (for call_indirect) and
+            // externref (for JS ref management). We need the funcref one.
+            let bestTable = null;
+            for (const key of Object.keys(exports)) {
+                const t = exports[key];
+                if (!(t instanceof WebAssembly.Table)) continue;
+                try {
+                    // Table.type() returns {element: "funcref"|"externref", ...}
+                    if (typeof t.type === 'function') {
+                        if (t.type().element === 'funcref') { bestTable = t; break; }
+                        continue;
+                    }
+                } catch {}
+                // Fallback: the funcref table is much larger (thousands of entries)
+                // than the externref table (~128).
+                if (t.length > 256 && (!bestTable || t.length > bestTable.length)) {
+                    bestTable = t;
+                }
+            }
+            if (bestTable) {
+                mainTable = bestTable;
+                const ty = typeof bestTable.type === 'function' ? bestTable.type().element : 'unknown';
+                console.log(`[grammars] found ${ty} table, length=${bestTable.length}`);
+            } else {
+                console.error('[grammars] could not find funcref table in WASM exports');
+                mainTable = new WebAssembly.Table({ initial: 64, element: 'anyfunc' });
+            }
+            nextTableSlot = mainTable.length;
+            return mainTable;
+        }
+
+        function buildGrammarImports(module, memBase, stackBase, stackSize, tableSize) {
+            const table = getMainTable();
+
+            // Reserve slots in the main table for this grammar's functions.
+            const tableBase = nextTableSlot;
+            const needed_total = tableBase + tableSize;
+            if (needed_total > table.length) {
+                try {
+                    table.grow(needed_total - table.length);
+                } catch (e) {
+                    throw new Error(
+                        `Cannot grow funcref table from ${table.length} to ${needed_total}: ${e.message}`
+                    );
+                }
+            }
+            nextTableSlot = needed_total;
+
+            const needed = WebAssembly.Module.imports(module);
+            const imports = {};
+            for (const imp of needed) {
+                if (!imports[imp.module]) imports[imp.module] = {};
+                if (imp.module === 'env') {
+                    switch (imp.name) {
+                        case 'memory':
+                            imports.env.memory = env._get_wasm_exports().memory;
+                            break;
+                        case '__memory_base':
+                            imports.env.__memory_base = memBase;
+                            break;
+                        case '__table_base':
+                            imports.env.__table_base = tableBase;
+                            break;
+                        case '__stack_pointer':
+                            imports.env.__stack_pointer = new WebAssembly.Global(
+                                { value: 'i32', mutable: true },
+                                stackBase + stackSize
+                            );
+                            break;
+                        case '__indirect_function_table':
+                            imports.env.__indirect_function_table = table;
+                            break;
+                        default:
+                            if (typeof env[imp.name] === 'function') {
+                                imports.env[imp.name] = env[imp.name];
+                            } else if (imp.kind === 'function') {
+                                imports.env[imp.name] = () => 0;
+                            } else if (imp.kind === 'global') {
+                                imports.env[imp.name] = new WebAssembly.Global(
+                                    { value: 'i32', mutable: true }, 0
+                                );
+                            }
+                    }
+                } else if (imp.module === 'GOT.mem' || imp.module === 'GOT.func') {
+                    imports[imp.module][imp.name] = new WebAssembly.Global(
+                        { value: 'i32', mutable: true }, 0
+                    );
+                }
+            }
+            return imports;
+        }
+
+        function instantiateGrammar(name, bytes) {
+            const dylink = parseDylink0(bytes);
+            if (!dylink) {
+                console.warn(`[grammars] ${name}: no dylink.0 section`);
+                return 0;
+            }
+
+            const align = Math.max(dylink.memAlign, 16);
+            // Allocate through Rust's allocator (alloc_zeroed) so dlmalloc
+            // stays in full control of memory growth. Zero-fill covers BSS.
+            const memBase = grammar_alloc(dylink.memSize, align);
+            if (!memBase) { console.error(`[grammars] ${name}: alloc failed for ${dylink.memSize} bytes`); return 0; }
+            const stackSize = 65536;
+            const stackBase = grammar_alloc(stackSize, 16);
+            if (!stackBase) { console.error(`[grammars] ${name}: stack alloc failed`); return 0; }
+
+            const module = new WebAssembly.Module(bytes);
+            const imports = buildGrammarImports(module, memBase, stackBase, stackSize, dylink.tableSize);
+            const instance = new WebAssembly.Instance(module, imports);
+
+            // Apply relocations. Call __wasm_apply_data_relocs directly
+            // (NOT __wasm_call_ctors which may call it internally, risking
+            // double relocation that corrupts all pointers).
+            if (instance.exports.__wasm_apply_data_relocs) {
+                instance.exports.__wasm_apply_data_relocs();
+            } else if (instance.exports.__wasm_call_ctors) {
+                instance.exports.__wasm_call_ctors();
+            }
+
+            const symName = `tree_sitter_${name.replace(/-/g, '_')}`;
+            const fn_ = instance.exports[symName];
+            if (!fn_) return 0;
+
+            const ptr = fn_();
+
+            const table = getMainTable();
+            const tableBase = nextTableSlot - dylink.tableSize;
+            const m = new DataView(env._get_wasm_exports().memory.buffer);
+            const abi = m.getUint32(ptr, true);
+
+            // ── Diagnostic: validate TSLanguage struct ──
+            // TSLanguage layout (wasm32, all fields i32/u32 unless noted):
+            //   +0   abi_version (u32)
+            //   +4   symbol_count .. +36 max_alias_seq_len(u16)
+            //   +40  parse_table(ptr) .. +88 lex_modes(ptr)
+            //   +92  lex_fn (func ptr / table index)
+            //   +96  keyword_lex_fn (func ptr / table index)
+            //   +100 keyword_capture_token (u16) + 2 pad
+            //   +104 external_scanner.states (ptr)
+            //   +108 external_scanner.symbol_map (ptr)
+            //   +112 external_scanner.create (func ptr)
+            //   +116 external_scanner.destroy (func ptr)
+            //   +120 external_scanner.scan (func ptr)
+            //   +124 external_scanner.serialize (func ptr)
+            //   +128 external_scanner.deserialize (func ptr)
+            //   +132 primary_state_ids (ptr)
+            const lex_fn         = m.getUint32(ptr + 92, true);
+            const keyword_lex_fn = m.getUint32(ptr + 96, true);
+            const ext_states     = m.getUint32(ptr + 104, true);
+            const ext_create     = m.getUint32(ptr + 112, true);
+            const ext_destroy    = m.getUint32(ptr + 116, true);
+            const ext_scan       = m.getUint32(ptr + 120, true);
+            const ext_serialize  = m.getUint32(ptr + 124, true);
+            const ext_deserialize= m.getUint32(ptr + 128, true);
+
+            const inRange = (v, lo, hi) => v >= lo && v < hi;
+            const tOk = v => v === 0 || inRange(v, tableBase, tableBase + dylink.tableSize);
+            const mOk = v => v === 0 || inRange(v, memBase, memBase + dylink.memSize);
+
+            console.log(`[grammars] ${name}: abi=${abi} memBase=0x${memBase.toString(16)} ptr=0x${ptr.toString(16)}`);
+            console.log(`[grammars] ${name}: tableBase=${tableBase} tableSize=${dylink.tableSize} tableLen=${table.length}`);
+            console.log(`[grammars] ${name}: lex_fn=${lex_fn} ${tOk(lex_fn)?'OK':'BAD'} keyword_lex_fn=${keyword_lex_fn} ${tOk(keyword_lex_fn)?'OK':'BAD'}`);
+            console.log(`[grammars] ${name}: ext.states=0x${ext_states.toString(16)} ${mOk(ext_states)?'OK':'BAD'}`);
+            console.log(`[grammars] ${name}: ext.create=${ext_create} ${tOk(ext_create)?'OK':'BAD'} destroy=${ext_destroy} ${tOk(ext_destroy)?'OK':'BAD'} scan=${ext_scan} ${tOk(ext_scan)?'OK':'BAD'}`);
+            console.log(`[grammars] ${name}: ext.serialize=${ext_serialize} ${tOk(ext_serialize)?'OK':'BAD'} deserialize=${ext_deserialize} ${tOk(ext_deserialize)?'OK':'BAD'}`);
+
+            // Verify table slots are populated (not null)
+            for (let i = 0; i < dylink.tableSize; i++) {
+                const fn = table.get(tableBase + i);
+                if (!fn) console.error(`[grammars] ${name}: table[${tableBase + i}] is NULL!`);
+            }
+
+            return ptr;
+        }
+
+        // ── helixGrammars ───────────────────────────────────────────────
+
+        window.helixGrammars = {
+            _cache: new Map(),
+
+            loadSync(name) {
+                const cached = this._cache.get(name);
+                if (cached) return cached;
+
+                try {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', `grammars/${name}.wasm`, false);
+                    xhr.overrideMimeType('text/plain; charset=x-user-defined');
+                    xhr.send();
+                    if (xhr.status !== 200) return 0;
+
+                    const raw = xhr.responseText;
+                    const bytes = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) {
+                        bytes[i] = raw.charCodeAt(i) & 0xff;
+                    }
+
+                    const ptr = instantiateGrammar(name, bytes);
+                    if (ptr) this._cache.set(name, ptr);
+                    return ptr;
+                } catch (e) {
+                    console.warn(`[grammars] ${name}:`, e);
+                    return 0;
+                }
+            },
+        };
+
+        // ── Terminal bridge ──────────────────────────────────────────────
+
+        window.helixWasm = {
+            writeToTerminal(data) {
+                if (window._term) window._term.write(data);
+            },
+            getTerminalSize() {
+                if (window._term) return new Uint16Array([window._term.cols, window._term.rows]);
+                return new Uint16Array([80, 24]);
+            }
+        };
+
+        // ── Main ─────────────────────────────────────────────────────────
+
+        async function main() {
+            const term = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+                theme: {
+                    background: '#282c34',
+                    foreground: '#abb2bf',
+                    cursor: '#528bff',
+                },
+                allowProposedApi: true,
+            });
+            window._term = term;
+
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            try {
+                term.loadAddon(new WebglAddon.WebglAddon());
+            } catch {}
+
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+            term.write('Loading Helix...\r\n');
+
+            const wasmInstance = await init();
+            env._set_wasm_exports(wasmInstance);
+            term.write('WASM loaded. ');
+
+            term.write('Starting editor...\r\n');
+
+            // Input handlers
+            term.attachCustomKeyEventHandler((e) => {
+                if (e.type === 'keydown') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const { key, shiftKey, ctrlKey, altKey } = e;
+                    setTimeout(() => send_key_event(key, shiftKey, ctrlKey, altKey), 0);
+                }
+                return false;
+            });
+            document.addEventListener('paste', (e) => {
+                const text = e.clipboardData?.getData('text');
+                if (text) { e.preventDefault(); setTimeout(() => send_paste_event(text), 0); }
+            });
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+                setTimeout(() => send_resize_event(term.cols, term.rows), 0);
+            });
+
+            term.clear();
+            try {
+                const editorPromise = run_editor();
+                // Catch rejection immediately so we see it even if a microtask
+                // crashes before the await continuation runs.
+                editorPromise.catch(e => {
+                    console.error('[helix] editor promise rejected:', e);
+                    term.write('\r\nEditor error: ' + e + '\r\n');
+                });
+                await editorPromise;
+            } catch (e) {
+                term.write('\r\nEditor error: ' + e + '\r\n');
+                console.error('Editor error:', e);
+            }
+        }
+
+        main().catch(e => {
+            console.error('Fatal error:', e);
+            document.body.innerText = 'Fatal error: ' + e;
+        });
+    </script>
+</body>
+</html>

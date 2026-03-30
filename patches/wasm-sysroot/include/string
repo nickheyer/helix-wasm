@@ -1,0 +1,92 @@
+#pragma once
+#include <cstring>
+#include <cstdlib>
+#include <new>
+#include <initializer_list>
+
+namespace std {
+    class string {
+        char* _data;
+        unsigned long _size;
+        unsigned long _cap;
+
+        void _grow(unsigned long need) {
+            unsigned long nc = _cap ? _cap * 2 : 16;
+            if (nc < need) nc = need;
+            char* nd = (char*)realloc(_data, nc + 1);
+            if (nd) { _data = nd; _cap = nc; }
+        }
+    public:
+        static const unsigned long npos = ~0UL;
+        using iterator = char*;
+        using const_iterator = const char*;
+
+        string() : _data(nullptr), _size(0), _cap(0) {}
+        string(const char* s) : string() { if (s) { _size = strlen(s); _grow(_size); memcpy(_data, s, _size); _data[_size] = 0; } }
+        string(const char* s, unsigned long n) : string() { _size = n; _grow(_size); memcpy(_data, s, _size); _data[_size] = 0; }
+        string(unsigned long n, char c) : string() { _size = n; _grow(_size); memset(_data, c, _size); _data[_size] = 0; }
+        string(const string& o) : string(o._data, o._size) {}
+        string(string&& o) : _data(o._data), _size(o._size), _cap(o._cap) { o._data = nullptr; o._size = o._cap = 0; }
+        ~string() { free(_data); }
+
+        string& operator=(const string& o) { if (this != &o) { clear(); append(o); } return *this; }
+        string& operator=(string&& o) { free(_data); _data=o._data; _size=o._size; _cap=o._cap; o._data=nullptr; o._size=o._cap=0; return *this; }
+        string& operator=(const char* s) { clear(); if(s) append(s, strlen(s)); return *this; }
+
+        const char* c_str() const { return _data ? _data : ""; }
+        const char* data() const { return c_str(); }
+        unsigned long size() const { return _size; }
+        unsigned long length() const { return _size; }
+        bool empty() const { return _size == 0; }
+        void clear() { _size = 0; if (_data) _data[0] = 0; }
+        void reserve(unsigned long n) { if (n > _cap) _grow(n); }
+        void resize(unsigned long n, char c = 0) { if (n > _cap) _grow(n); if (n > _size) memset(_data+_size, c, n-_size); _size = n; if(_data) _data[_size]=0; }
+
+        char& operator[](unsigned long i) { return _data[i]; }
+        char operator[](unsigned long i) const { return _data[i]; }
+        char& back() { return _data[_size-1]; }
+
+        void push_back(char c) { if (_size >= _cap) _grow(_size+1); _data[_size++] = c; _data[_size] = 0; }
+        void pop_back() { if (_size) { _size--; _data[_size] = 0; } }
+
+        string& append(const char* s, unsigned long n) { if (_size+n > _cap) _grow(_size+n); memcpy(_data+_size, s, n); _size += n; _data[_size]=0; return *this; }
+        string& append(const string& o) { return append(o._data, o._size); }
+        string& operator+=(char c) { push_back(c); return *this; }
+        string& operator+=(const string& o) { return append(o); }
+        string& operator+=(const char* s) { return append(s, strlen(s)); }
+
+        bool operator==(const string& o) const { return _size == o._size && (_size == 0 || memcmp(_data, o._data, _size) == 0); }
+        bool operator!=(const string& o) const { return !(*this == o); }
+        bool operator<(const string& o) const { unsigned long n = _size < o._size ? _size : o._size; int r = n ? memcmp(_data, o._data, n) : 0; return r < 0 || (r == 0 && _size < o._size); }
+
+        iterator begin() { return _data; }
+        iterator end() { return _data + _size; }
+        const_iterator begin() const { return _data; }
+        const_iterator end() const { return _data + _size; }
+
+        string& assign(const char* first, const char* last) { clear(); return append(first, last - first); }
+        unsigned long copy(char* dest, unsigned long n, unsigned long pos = 0) const {
+            if (pos >= _size) return 0;
+            if (n > _size - pos) n = _size - pos;
+            memcpy(dest, _data + pos, n);
+            return n;
+        }
+
+        unsigned long find(char c, unsigned long pos = 0) const { for (unsigned long i = pos; i < _size; i++) if (_data[i] == c) return i; return npos; }
+        string substr(unsigned long pos = 0, unsigned long n = npos) const { if (pos >= _size) return string(); if (n > _size - pos) n = _size - pos; return string(_data + pos, n); }
+
+        void insert(unsigned long pos, unsigned long n, char c) {
+            if (_size+n > _cap) _grow(_size+n);
+            memmove(_data+pos+n, _data+pos, _size-pos);
+            memset(_data+pos, c, n);
+            _size += n; _data[_size] = 0;
+        }
+        void erase(unsigned long pos, unsigned long n = npos) {
+            if (pos >= _size) return;
+            if (n > _size - pos) n = _size - pos;
+            memmove(_data+pos, _data+pos+n, _size-pos-n);
+            _size -= n; _data[_size] = 0;
+        }
+    };
+    inline string operator+(const string& a, const string& b) { string r(a); r += b; return r; }
+}

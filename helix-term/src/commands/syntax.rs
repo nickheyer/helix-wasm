@@ -22,7 +22,7 @@ use helix_view::{
     document::{from_reader, SCRATCH_BUFFER_NAME},
     Align, Document, DocumentId, Editor,
 };
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use helix_vfs::{WalkBuilder, WalkEntry, WalkState};
 
 use crate::{
     filter_picker_entry,
@@ -216,8 +216,7 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
         helix_loader::find_workspace().0
     };
 
-    let absolute_root = search_root
-        .canonicalize()
+    let absolute_root = helix_vfs::canonicalize(&search_root)
         .unwrap_or_else(|_| search_root.clone());
 
     let config = cx.editor.config();
@@ -336,12 +335,12 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                 let documents = &documents;
                 let pattern = pattern.clone();
                 let syntax_cache = &state.syntax_cache;
-                Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
+                Box::new(move |entry: std::io::Result<WalkEntry>| -> WalkState {
                     let entry = match entry {
                         Ok(entry) => entry,
                         Err(_) => return WalkState::Continue,
                     };
-                    if !entry.path().is_file() {
+                    if !entry.is_file() {
                         return WalkState::Continue;
                     }
                     let path = entry.path();
@@ -381,7 +380,12 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                         // only important _if_ a file matches.
                         Ok(false)
                     });
-                    if let Err(err) = searcher.search_path(&matcher, path, sink) {
+                    let search_result = if let Ok(contents) = helix_vfs::read(path) {
+                        searcher.search_slice(&matcher, &contents, sink)
+                    } else {
+                        Ok(())
+                    };
+                    if let Err(err) = search_result {
                         log::info!("Workspace syntax search error: {}, {}", path.display(), err);
                     }
                     if quit {
@@ -439,8 +443,9 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
 
 /// Create a Rope and language config for a given existing path without creating a full Document.
 fn syntax_for_path(path: &Path, loader: &Loader) -> Option<(Rope, Syntax)> {
-    let mut file = std::fs::File::open(path).ok()?;
-    let (rope, _encoding, _has_bom) = from_reader(&mut file, None).ok()?;
+    let bytes = helix_vfs::read(path).ok()?;
+    let mut cursor = std::io::Cursor::new(bytes);
+    let (rope, _encoding, _has_bom) = from_reader(&mut cursor, None).ok()?;
     let text = rope.slice(..);
     let language = loader
         .language_for_filename(path)

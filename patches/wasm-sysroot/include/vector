@@ -1,0 +1,105 @@
+#pragma once
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <initializer_list>
+
+namespace std {
+    template<class It>
+    class reverse_iterator {
+        It _cur;
+    public:
+        reverse_iterator() = default;
+        explicit reverse_iterator(It x) : _cur(x) {}
+        It base() const { return _cur; }
+        auto& operator*() const { It tmp = _cur; return *--tmp; }
+        reverse_iterator& operator++() { --_cur; return *this; }
+        reverse_iterator operator++(int) { auto t = *this; --_cur; return t; }
+        reverse_iterator& operator--() { ++_cur; return *this; }
+        bool operator==(const reverse_iterator& o) const { return _cur == o._cur; }
+        bool operator!=(const reverse_iterator& o) const { return _cur != o._cur; }
+    };
+
+    template<class T>
+    class vector {
+        T* _data;
+        unsigned long _size;
+        unsigned long _cap;
+
+        void _grow(unsigned long need) {
+            unsigned long nc = _cap ? _cap * 2 : 4;
+            if (nc < need) nc = need;
+            T* nd = (T*)realloc(_data, nc * sizeof(T));
+            if (nd) { _data = nd; _cap = nc; }
+        }
+        void _destroy() { for (unsigned long i = 0; i < _size; i++) _data[i].~T(); free(_data); }
+    public:
+        using iterator = T*;
+        using const_iterator = const T*;
+        using reverse_iterator = std::reverse_iterator<iterator>;
+        using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+        vector() : _data(nullptr), _size(0), _cap(0) {}
+        vector(unsigned long n, const T& v = T()) : vector() { resize(n, v); }
+        vector(initializer_list<T> il) : vector() { reserve(il.size()); for (auto& x : il) push_back(x); }
+        vector(const vector& o) : vector() { reserve(o._size); for (unsigned long i=0;i<o._size;i++) push_back(o._data[i]); }
+        vector(vector&& o) : _data(o._data), _size(o._size), _cap(o._cap) { o._data=nullptr; o._size=o._cap=0; }
+        ~vector() { _destroy(); }
+
+        vector& operator=(const vector& o) { if(this!=&o){clear(); reserve(o._size); for(unsigned long i=0;i<o._size;i++) push_back(o._data[i]);} return *this; }
+        vector& operator=(vector&& o) { _destroy(); _data=o._data;_size=o._size;_cap=o._cap; o._data=nullptr;o._size=o._cap=0; return *this; }
+
+        T& operator[](unsigned long i) { return _data[i]; }
+        const T& operator[](unsigned long i) const { return _data[i]; }
+        T& back() { return _data[_size-1]; }
+        const T& back() const { return _data[_size-1]; }
+        T& front() { return _data[0]; }
+        T* data() { return _data; }
+        const T* data() const { return _data; }
+
+        unsigned long size() const { return _size; }
+        bool empty() const { return _size == 0; }
+        unsigned long capacity() const { return _cap; }
+
+        void reserve(unsigned long n) { if (n > _cap) _grow(n); }
+        void push_back(const T& v) { if (_size >= _cap) _grow(_size+1); new(&_data[_size++]) T(v); }
+        void push_back(T&& v) { if (_size >= _cap) _grow(_size+1); new(&_data[_size++]) T(static_cast<T&&>(v)); }
+        template<class... Args> T& emplace_back(Args&&... args) { if(_size>=_cap) _grow(_size+1); new(&_data[_size]) T(static_cast<Args&&>(args)...); return _data[_size++]; }
+        void pop_back() { if (_size) _data[--_size].~T(); }
+        void clear() { for (unsigned long i=0;i<_size;i++) _data[i].~T(); _size=0; }
+
+        void resize(unsigned long n, const T& v = T()) {
+            while (_size > n) pop_back();
+            if (n > _cap) _grow(n);
+            while (_size < n) push_back(v);
+        }
+
+        iterator begin() { return _data; }
+        iterator end() { return _data + _size; }
+        const_iterator begin() const { return _data; }
+        const_iterator end() const { return _data + _size; }
+        reverse_iterator rbegin() { return reverse_iterator(end()); }
+        reverse_iterator rend() { return reverse_iterator(begin()); }
+        const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+        const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+
+        iterator erase(iterator pos) {
+            pos->~T();
+            unsigned long i = pos - _data;
+            memmove(_data+i, _data+i+1, (_size-i-1)*sizeof(T));
+            _size--;
+            return _data + i;
+        }
+        iterator insert(iterator pos, const T& v) {
+            unsigned long i = pos - _data;
+            if (_size >= _cap) { _grow(_size+1); pos = _data + i; }
+            memmove(_data+i+1, _data+i, (_size-i)*sizeof(T));
+            new(&_data[i]) T(v);
+            _size++;
+            return _data + i;
+        }
+
+        void assign(unsigned long n, const T& v) { clear(); resize(n, v); }
+        void swap(vector& o) { T* td=_data; unsigned long ts=_size,tc=_cap; _data=o._data;_size=o._size;_cap=o._cap; o._data=td;o._size=ts;o._cap=tc; }
+    };
+}

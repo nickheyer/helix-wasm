@@ -15,7 +15,7 @@ use helix_view::document::{Mode, SavePoint};
 use helix_view::handlers::completion::{CompletionEvent, ResponseContext};
 use helix_view::{Document, DocumentId, Editor, ViewId};
 use tokio::task::JoinSet;
-use tokio::time::{timeout_at, Instant};
+use helix_stdx::time::Instant;
 
 use crate::compositor::Compositor;
 use crate::config::Config;
@@ -246,12 +246,18 @@ fn request_completions(
         handle.clone(),
         savepoint.clone(),
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
         requests.spawn_blocking(path_completion_request);
+        #[cfg(target_arch = "wasm32")]
+        requests.spawn(async move { path_completion_request() });
     }
     if let Some(word_completion_request) =
         word::completion(editor, trigger, handle.clone(), savepoint)
     {
+        #[cfg(not(target_arch = "wasm32"))]
         requests.spawn_blocking(word_completion_request);
+        #[cfg(target_arch = "wasm32")]
+        requests.spawn(async move { word_completion_request() });
     }
 
     let ui = compositor.find::<ui::EditorView>().unwrap();
@@ -268,7 +274,7 @@ fn request_completions(
         context.insert(response.provider, response.context);
         let deadline = Instant::now() + Duration::from_millis(100);
         loop {
-            let Some(mut response) = timeout_at(deadline, handle_response(&mut requests, false))
+            let Some(mut response) = helix_stdx::time::timeout(deadline.saturating_duration_since(Instant::now()), handle_response(&mut requests, false))
                 .await
                 .ok()
                 .flatten()
